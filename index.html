@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Comparador Cotización vs Factura</title>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+<style>
+body{font-family:Arial;padding:20px;background:#f4f6f9}
+h2{color:#00416A}
+input,select,button{padding:8px;margin:6px}
+table{width:100%;border-collapse:collapse;margin-top:20px;background:#fff}
+th,td{border:1px solid #ccc;padding:6px;text-align:center;font-size:13px}
+th{background:#00416A;color:#fff}
+.total{font-size:18px;font-weight:bold;color:#b00020;margin-top:15px}
+.alerta{background:#fff3cd}
+</style>
+</head>
+
+<body>
+
+<h2>📊 Comparador Cotización vs Factura</h2>
+
+<input type="file" id="excelFile" accept=".xlsx,.xls">
+<input type="file" id="xmlFile" accept=".xml">
+<br>
+<button onclick="procesar()">COMPARAR</button>
+
+<table id="tabla">
+<thead>
+<tr>
+<th>Producto</th>
+<th>Cotizado</th>
+<th>Factura</th>
+<th>Cantidad</th>
+<th>Diferencia</th>
+<th>A descontar</th>
+</tr>
+</thead>
+<tbody></tbody>
+</table>
+
+<div class="total" id="total"></div>
+
+<script>
+function normalizar(txt){
+  return txt.toUpperCase()
+            .replace(/\s+/g,' ')
+            .replace(' ML','ML')
+            .trim()
+}
+
+async function procesar(){
+  const excel = document.getElementById('excelFile').files[0]
+  const xml = document.getElementById('xmlFile').files[0]
+
+  if(!excel || !xml){
+    alert('Sube Excel y XML')
+    return
+  }
+
+  const cotizaciones = await leerExcel(excel)
+  const factura = await leerXML(xml)
+
+  comparar(cotizaciones, factura)
+}
+
+function leerExcel(file){
+  return new Promise(resolve=>{
+    const reader = new FileReader()
+    reader.onload = e=>{
+      const data = new Uint8Array(e.target.result)
+      const wb = XLSX.read(data,{type:'array'})
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      const rows = XLSX.utils.sheet_to_json(ws,{defval:''})
+
+      const productos = rows
+        .filter(r=>r.DESCRIPCION && r.PRECIO)
+        .map(r=>({
+          descripcion: normalizar(r.DESCRIPCION),
+          precio: parseFloat(r.PRECIO)
+        }))
+
+      resolve(productos)
+    }
+    reader.readAsArrayBuffer(file)
+  })
+}
+
+function leerXML(file){
+  return new Promise(resolve=>{
+    const reader = new FileReader()
+    reader.onload = e=>{
+      const xml = new DOMParser().parseFromString(e.target.result,'text/xml')
+      const conceptos = [...xml.getElementsByTagName('cfdi:Concepto')]
+
+      const productos = conceptos.map(c=>({
+        descripcion: normalizar(c.getAttribute('Descripcion')),
+        cantidad: parseFloat(c.getAttribute('Cantidad')),
+        precio: parseFloat(c.getAttribute('ValorUnitario'))
+      }))
+
+      resolve(productos)
+    }
+    reader.readAsText(file)
+  })
+}
+
+function comparar(cotizados, facturados){
+  const tbody = document.querySelector('#tabla tbody')
+  tbody.innerHTML = ''
+  let total = 0
+
+  facturados.forEach(f=>{
+    const c = cotizados.find(x=>x.descripcion === f.descripcion)
+    if(!c) return
+
+    if(f.precio > c.precio){
+      const dif = f.precio - c.precio
+      const desc = dif * f.cantidad
+      total += desc
+
+      const tr = document.createElement('tr')
+      tr.innerHTML = `
+        <td>${f.descripcion}</td>
+        <td>${c.precio.toFixed(2)}</td>
+        <td>${f.precio.toFixed(2)}</td>
+        <td>${f.cantidad}</td>
+        <td>+${dif.toFixed(2)}</td>
+        <td>${desc.toFixed(2)}</td>
+      `
+      tbody.appendChild(tr)
+    }
+  })
+
+  document.getElementById('total').innerText =
+    'TOTAL A DESCONTAR: $ ' + total.toFixed(2)
+}
+</script>
+
+</body>
+</html>
