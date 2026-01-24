@@ -102,6 +102,13 @@ function normalizar(t){
     .trim()
 }
 
+// clave base para empatar productos
+function obtenerClave(descripcion){
+  const ignorar = ['DE','DEL','LA','EL','EN','Y','CON','SIN','ML','GR','KG','L']
+  const partes = descripcion.split(' ')
+  return partes.find(p => p.length > 3 && !ignorar.includes(p)) || ''
+}
+
 // ================= PROCESO PRINCIPAL =================
 async function procesar(){
   const excel = excelFile.files[0]
@@ -119,7 +126,7 @@ async function procesar(){
   comparar(cotizados, facturados)
 }
 
-// ================= LECTURA EXCEL (ROBUSTA) =================
+// ================= LECTURA EXCEL =================
 function leerExcel(file, colPrecio){
   return new Promise(resolve=>{
     const reader = new FileReader()
@@ -128,28 +135,27 @@ function leerExcel(file, colPrecio){
       const ws = wb.Sheets[wb.SheetNames[0]]
       const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''})
 
-      // buscar fila donde está DESCRIPCION
       const headerIndex = rows.findIndex(r =>
         String(r[0]).toUpperCase().includes('DESCRIP')
       )
 
-      if (headerIndex === -1) {
-        alert('No se encontró la columna DESCRIPCION')
+      if(headerIndex === -1){
+        alert('No se encontró DESCRIPCION en el Excel')
         resolve([])
         return
       }
 
       const data = rows.slice(headerIndex + 1)
-        .map(r => ({
-          descripcion: normalizar(r[0]),
-          precio: limpiarNumero(r[colPrecio]),
-          cantidad: limpiarNumero(r[5]) // CANTIDAD CAJAS
-        }))
-        .filter(r =>
-          r.descripcion &&
-          r.descripcion.length > 3 &&
-          r.precio > 0
-        )
+        .map(r => {
+          const desc = normalizar(r[0])
+          return {
+            descripcion: desc,
+            clave: obtenerClave(desc),
+            precio: limpiarNumero(r[colPrecio]),
+            cantidad: limpiarNumero(r[5])
+          }
+        })
+        .filter(r => r.clave && r.precio > 0)
 
       resolve(data)
     }
@@ -157,7 +163,7 @@ function leerExcel(file, colPrecio){
   })
 }
 
-// ================= LECTURA XML (SIN PROBLEMA DE NAMESPACE) =================
+// ================= LECTURA XML =================
 function leerXML(file){
   return new Promise(resolve=>{
     const reader = new FileReader()
@@ -167,11 +173,14 @@ function leerXML(file){
       const conceptos = [...xml.getElementsByTagName('*')]
         .filter(n => n.localName === 'Concepto')
 
-      const data = conceptos.map(c=>({
-        descripcion: normalizar(c.getAttribute('Descripcion')),
-        cantidad: limpiarNumero(c.getAttribute('Cantidad')),
-        precio: limpiarNumero(c.getAttribute('ValorUnitario'))
-      }))
+      const data = conceptos.map(c=>{
+        const desc = normalizar(c.getAttribute('Descripcion'))
+        return {
+          descripcion: desc,
+          cantidad: limpiarNumero(c.getAttribute('Cantidad')),
+          precio: limpiarNumero(c.getAttribute('ValorUnitario'))
+        }
+      })
 
       resolve(data)
     }
@@ -179,14 +188,14 @@ function leerXML(file){
   })
 }
 
-// ================= COMPARACIÓN =================
+// ================= COMPARACIÓN POR CLAVE =================
 function comparar(cotizados, facturados){
   const tbody = document.getElementById('tabla')
   tbody.innerHTML = ''
   let total = 0
 
   facturados.forEach(f=>{
-    const c = cotizados.find(x => x.descripcion === f.descripcion)
+    const c = cotizados.find(x => f.descripcion.includes(x.clave))
     if(!c) return
 
     if(f.precio > c.precio){
