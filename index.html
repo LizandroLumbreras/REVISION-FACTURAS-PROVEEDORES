@@ -8,7 +8,7 @@
 
 <style>
 body{
-  font-family:Arial, Helvetica, sans-serif;
+  font-family: Arial, Helvetica, sans-serif;
   background:#f4f6f9;
   padding:20px;
 }
@@ -91,7 +91,15 @@ function limpiarNumero(v){
 }
 
 function normalizar(t){
-  return String(t).toUpperCase().replace(/\s+/g,' ').trim()
+  return String(t)
+    .toUpperCase()
+    .replace(/Á/g,'A')
+    .replace(/É/g,'E')
+    .replace(/Í/g,'I')
+    .replace(/Ó/g,'O')
+    .replace(/Ú/g,'U')
+    .replace(/\s+/g,' ')
+    .trim()
 }
 
 // ================= PROCESO PRINCIPAL =================
@@ -111,7 +119,7 @@ async function procesar(){
   comparar(cotizados, facturados)
 }
 
-// ================= LECTURA EXCEL =================
+// ================= LECTURA EXCEL (ROBUSTA) =================
 function leerExcel(file, colPrecio){
   return new Promise(resolve=>{
     const reader = new FileReader()
@@ -120,7 +128,7 @@ function leerExcel(file, colPrecio){
       const ws = wb.Sheets[wb.SheetNames[0]]
       const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''})
 
-      // 1️⃣ Buscar la fila donde está "DESCRIPCION"
+      // buscar fila donde está DESCRIPCION
       const headerIndex = rows.findIndex(r =>
         String(r[0]).toUpperCase().includes('DESCRIP')
       )
@@ -131,7 +139,6 @@ function leerExcel(file, colPrecio){
         return
       }
 
-      // 2️⃣ Leer SOLO filas debajo del encabezado
       const data = rows.slice(headerIndex + 1)
         .map(r => ({
           descripcion: normalizar(r[0]),
@@ -150,19 +157,23 @@ function leerExcel(file, colPrecio){
   })
 }
 
-// ================= LECTURA XML =================
+// ================= LECTURA XML (SIN PROBLEMA DE NAMESPACE) =================
 function leerXML(file){
   return new Promise(resolve=>{
     const reader = new FileReader()
     reader.onload = e=>{
       const xml = new DOMParser().parseFromString(e.target.result,'text/xml')
-      const conceptos = [...xml.getElementsByTagName('cfdi:Concepto')]
 
-      resolve(conceptos.map(c=>({
+      const conceptos = [...xml.getElementsByTagName('*')]
+        .filter(n => n.localName === 'Concepto')
+
+      const data = conceptos.map(c=>({
         descripcion: normalizar(c.getAttribute('Descripcion')),
         cantidad: limpiarNumero(c.getAttribute('Cantidad')),
         precio: limpiarNumero(c.getAttribute('ValorUnitario'))
-      })))
+      }))
+
+      resolve(data)
     }
     reader.readAsText(file)
   })
