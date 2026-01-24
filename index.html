@@ -120,12 +120,29 @@ function leerExcel(file, colPrecio){
       const ws = wb.Sheets[wb.SheetNames[0]]
       const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''})
 
-      const data = rows.slice(1).map(r=>({
-        descripcion: normalizar(r[0]),
-        precio: limpiarNumero(r[colPrecio]),
-        cantidad: limpiarNumero(r[5])
-      }))
-      .filter(r => r.descripcion && r.precio > 0)
+      // 1️⃣ Buscar la fila donde está "DESCRIPCION"
+      const headerIndex = rows.findIndex(r =>
+        String(r[0]).toUpperCase().includes('DESCRIP')
+      )
+
+      if (headerIndex === -1) {
+        alert('No se encontró la columna DESCRIPCION')
+        resolve([])
+        return
+      }
+
+      // 2️⃣ Leer SOLO filas debajo del encabezado
+      const data = rows.slice(headerIndex + 1)
+        .map(r => ({
+          descripcion: normalizar(r[0]),
+          precio: limpiarNumero(r[colPrecio]),
+          cantidad: limpiarNumero(r[5]) // CANTIDAD CAJAS
+        }))
+        .filter(r =>
+          r.descripcion &&
+          r.descripcion.length > 3 &&
+          r.precio > 0
+        )
 
       resolve(data)
     }
