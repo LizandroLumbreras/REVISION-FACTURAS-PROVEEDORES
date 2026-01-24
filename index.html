@@ -7,14 +7,44 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
 <style>
-body{font-family:Arial;padding:20px;background:#f4f6f9}
+body{
+  font-family:Arial, Helvetica, sans-serif;
+  background:#f4f6f9;
+  padding:20px;
+}
 h2{color:#00416A}
-input,select,button{padding:8px;margin:6px}
-table{width:100%;border-collapse:collapse;margin-top:20px;background:#fff}
-th,td{border:1px solid #ccc;padding:6px;text-align:center;font-size:13px}
-th{background:#00416A;color:#fff}
-.total{font-size:18px;font-weight:bold;color:#b00020;margin-top:15px}
-.alerta{background:#fff3cd}
+select,input,button{
+  padding:8px;
+  margin:6px 6px 6px 0;
+}
+button{
+  background:#00416A;
+  color:#fff;
+  border:none;
+  cursor:pointer;
+}
+table{
+  width:100%;
+  border-collapse:collapse;
+  margin-top:20px;
+  background:#fff;
+}
+th,td{
+  border:1px solid #ccc;
+  padding:6px;
+  font-size:13px;
+  text-align:center;
+}
+th{
+  background:#00416A;
+  color:#fff;
+}
+.total{
+  margin-top:15px;
+  font-size:18px;
+  font-weight:bold;
+  color:#b00020;
+}
 </style>
 </head>
 
@@ -22,72 +52,88 @@ th{background:#00416A;color:#fff}
 
 <h2>📊 Comparador Cotización vs Factura</h2>
 
+<label>Proveedor:</label>
+<select id="proveedor">
+  <option value="1">ABARROTES</option>
+  <option value="2">SAHUAYO</option>
+  <option value="3">DETALLE Y DISTRIBUCION</option>
+  <option value="4">DECASA</option>
+</select>
+
+<br>
+
 <input type="file" id="excelFile" accept=".xlsx,.xls">
 <input type="file" id="xmlFile" accept=".xml">
+
 <br>
 <button onclick="procesar()">COMPARAR</button>
 
-<table id="tabla">
+<table>
 <thead>
 <tr>
-<th>Producto</th>
-<th>Cotizado</th>
-<th>Factura</th>
-<th>Cantidad</th>
-<th>Diferencia</th>
-<th>A descontar</th>
+  <th>Producto</th>
+  <th>Cotizado</th>
+  <th>Factura</th>
+  <th>Cantidad</th>
+  <th>Diferencia</th>
+  <th>A descontar</th>
 </tr>
 </thead>
-<tbody></tbody>
+<tbody id="tabla"></tbody>
 </table>
 
 <div class="total" id="total"></div>
 
 <script>
-function normalizar(txt){
-  return txt.toUpperCase()
-            .replace(/\s+/g,' ')
-            .replace(' ML','ML')
-            .trim()
+// ================= UTILIDADES =================
+function limpiarNumero(v){
+  return parseFloat(String(v).replace(/[^\d.]/g,'')) || 0
 }
 
-async function procesar(){
-  const excel = document.getElementById('excelFile').files[0]
-  const xml = document.getElementById('xmlFile').files[0]
+function normalizar(t){
+  return String(t).toUpperCase().replace(/\s+/g,' ').trim()
+}
 
+// ================= PROCESO PRINCIPAL =================
+async function procesar(){
+  const excel = excelFile.files[0]
+  const xml = xmlFile.files[0]
   if(!excel || !xml){
-    alert('Sube Excel y XML')
+    alert('Sube el Excel y el XML')
     return
   }
 
-  const cotizaciones = await leerExcel(excel)
-  const factura = await leerXML(xml)
+  const proveedorIndex = parseInt(document.getElementById('proveedor').value)
 
-  comparar(cotizaciones, factura)
+  const cotizados = await leerExcel(excel, proveedorIndex)
+  const facturados = await leerXML(xml)
+
+  comparar(cotizados, facturados)
 }
 
-function leerExcel(file){
+// ================= LECTURA EXCEL =================
+function leerExcel(file, colPrecio){
   return new Promise(resolve=>{
     const reader = new FileReader()
     reader.onload = e=>{
-      const data = new Uint8Array(e.target.result)
-      const wb = XLSX.read(data,{type:'array'})
+      const wb = XLSX.read(new Uint8Array(e.target.result), {type:'array'})
       const ws = wb.Sheets[wb.SheetNames[0]]
-      const rows = XLSX.utils.sheet_to_json(ws,{defval:''})
+      const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''})
 
-      const productos = rows
-        .filter(r=>r.DESCRIPCION && r.PRECIO)
-        .map(r=>({
-          descripcion: normalizar(r.DESCRIPCION),
-          precio: parseFloat(r.PRECIO)
-        }))
+      const data = rows.slice(1).map(r=>({
+        descripcion: normalizar(r[0]),
+        precio: limpiarNumero(r[colPrecio]),
+        cantidad: limpiarNumero(r[5])
+      }))
+      .filter(r => r.descripcion && r.precio > 0)
 
-      resolve(productos)
+      resolve(data)
     }
     reader.readAsArrayBuffer(file)
   })
 }
 
+// ================= LECTURA XML =================
 function leerXML(file){
   return new Promise(resolve=>{
     const reader = new FileReader()
@@ -95,25 +141,24 @@ function leerXML(file){
       const xml = new DOMParser().parseFromString(e.target.result,'text/xml')
       const conceptos = [...xml.getElementsByTagName('cfdi:Concepto')]
 
-      const productos = conceptos.map(c=>({
+      resolve(conceptos.map(c=>({
         descripcion: normalizar(c.getAttribute('Descripcion')),
-        cantidad: parseFloat(c.getAttribute('Cantidad')),
-        precio: parseFloat(c.getAttribute('ValorUnitario'))
-      }))
-
-      resolve(productos)
+        cantidad: limpiarNumero(c.getAttribute('Cantidad')),
+        precio: limpiarNumero(c.getAttribute('ValorUnitario'))
+      })))
     }
     reader.readAsText(file)
   })
 }
 
+// ================= COMPARACIÓN =================
 function comparar(cotizados, facturados){
-  const tbody = document.querySelector('#tabla tbody')
+  const tbody = document.getElementById('tabla')
   tbody.innerHTML = ''
   let total = 0
 
   facturados.forEach(f=>{
-    const c = cotizados.find(x=>x.descripcion === f.descripcion)
+    const c = cotizados.find(x => x.descripcion === f.descripcion)
     if(!c) return
 
     if(f.precio > c.precio){
@@ -121,16 +166,16 @@ function comparar(cotizados, facturados){
       const desc = dif * f.cantidad
       total += desc
 
-      const tr = document.createElement('tr')
-      tr.innerHTML = `
-        <td>${f.descripcion}</td>
-        <td>${c.precio.toFixed(2)}</td>
-        <td>${f.precio.toFixed(2)}</td>
-        <td>${f.cantidad}</td>
-        <td>+${dif.toFixed(2)}</td>
-        <td>${desc.toFixed(2)}</td>
+      tbody.innerHTML += `
+        <tr>
+          <td>${f.descripcion}</td>
+          <td>${c.precio.toFixed(2)}</td>
+          <td>${f.precio.toFixed(2)}</td>
+          <td>${f.cantidad}</td>
+          <td>+${dif.toFixed(2)}</td>
+          <td>${desc.toFixed(2)}</td>
+        </tr>
       `
-      tbody.appendChild(tr)
     }
   })
 
