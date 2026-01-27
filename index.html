@@ -227,30 +227,35 @@ function comparar(cotizados, facturados){
     const c = cotizados.find(x => f.descripcion.includes(x.clave))
     if(!c) return
 
-    // prioridad: XML → Excel → 1
-    const piezasCaja = f.piezasCaja || c.piezasCaja || 1
+    // detectar si el XML trae piezas
+    const piezasCaja = f.piezasCaja ?? null
+    const tienePiezas = piezasCaja !== null
 
-    const precioFacturaPieza = dividirSeguro(f.precioCaja, piezasCaja)
-    const piezasTotales = f.cajas * piezasCaja
+    const piezasUsadas = tienePiezas ? piezasCaja : 1
+    const precioFacturaPieza = dividirSeguro(f.precioCaja, piezasUsadas)
+    const piezasTotales = f.cajas * piezasUsadas
 
-    if(precioFacturaPieza > c.precioPieza){
-      const dif = precioFacturaPieza - c.precioPieza
-      const desc = dif * piezasTotales
+    const dif = precioFacturaPieza - c.precioPieza
+    const desc = (tienePiezas && dif > 0) ? dif * piezasTotales : 0
+
+    // mostrar si hay diferencia o si falta capturar piezas
+    if (dif > 0 || !tienePiezas) {
       total += desc
 
       tbody.innerHTML += `
-        <tr>
+        <tr ${!tienePiezas ? 'style="background:#fff7cc"' : ''}>
           <td>${f.descripcion}</td>
           <td>${c.precioPieza.toFixed(2)}</td>
           <td>${precioFacturaPieza.toFixed(2)}</td>
           <td>
-  <input type="number"
-         value="${piezasCaja}"
-         min="1"
-         style="width:70px"
-         onchange="recalcularFila(this, ${f.cajas}, ${c.precioPieza}, ${f.precioCaja})">
-</td>
-          <td>+${dif.toFixed(2)}</td>
+            <input type="number"
+                   value="${tienePiezas ? piezasCaja : ''}"
+                   min="1"
+                   placeholder="?"
+                   style="width:70px"
+                   onchange="recalcularFila(this, ${f.cajas}, ${c.precioPieza}, ${f.precioCaja})">
+          </td>
+          <td>${dif > 0 ? '+' + dif.toFixed(2) : '0.00'}</td>
           <td>${desc.toFixed(2)}</td>
         </tr>
       `
