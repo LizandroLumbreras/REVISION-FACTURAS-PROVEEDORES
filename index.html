@@ -108,6 +108,25 @@ function obtenerClave(descripcion){
   const partes = descripcion.split(' ')
   return partes.find(p => p.length > 3 && !ignorar.includes(p)) || ''
 }
+function dividirSeguro(a,b){
+  return b > 0 ? a / b : a
+}
+
+function extraerPiezasCaja(descripcion){
+  const patrones = [
+    /C\/\s*(\d+)/,        // C/12
+    /CJ\s*(\d+)/,         // CJ 12
+    /CAJA\s*(\d+)/,       // CAJA 12
+    /(\d+)\s*PZ/,         // 12 PZ
+    /(\d+)\s*PIEZAS/      // 12 PIEZAS
+  ]
+
+  for(const p of patrones){
+    const m = descripcion.match(p)
+    if(m) return parseInt(m[1])
+  }
+  return null
+}
 
 // ================= PROCESO PRINCIPAL =================
 async function procesar(){
@@ -145,17 +164,19 @@ function leerExcel(file, colPrecio){
         return
       }
 
-      const data = rows.slice(headerIndex + 1)
-        .map(r => {
-          const desc = normalizar(r[0])
-          return {
-            descripcion: desc,
-            clave: obtenerClave(desc),
-            precio: limpiarNumero(r[colPrecio]),
-            cantidad: limpiarNumero(r[5])
-          }
-        })
-        .filter(r => r.clave && r.precio > 0)
+const data = rows.slice(headerIndex + 1)
+  .map(r => {
+    const desc = normalizar(r[0])
+    return {
+      descripcion: desc,
+      clave: obtenerClave(desc),
+      precioPieza: limpiarNumero(r[colPrecio]),   // precio por pieza
+      cajas: limpiarNumero(r[5]),
+      piezasCaja: limpiarNumero(r[6]) || 1        // PIEZAS_X_CAJA
+    }
+  })
+  .filter(r => r.clave && r.precioPieza > 0)
+
 
       resolve(data)
     }
@@ -175,11 +196,15 @@ function leerXML(file){
 
       const data = conceptos.map(c=>{
         const desc = normalizar(c.getAttribute('Descripcion'))
-        return {
-          descripcion: desc,
-          cantidad: limpiarNumero(c.getAttribute('Cantidad')),
-          precio: limpiarNumero(c.getAttribute('ValorUnitario'))
-        }
+const piezasDetectadas = extraerPiezasCaja(desc)
+
+return {
+  descripcion: desc,
+  cajas: limpiarNumero(c.getAttribute('Cantidad')),
+  precioCaja: limpiarNumero(c.getAttribute('ValorUnitario')),
+  piezasCaja: piezasDetectadas
+}
+
       })
 
       resolve(data)
@@ -198,17 +223,23 @@ function comparar(cotizados, facturados){
     const c = cotizados.find(x => f.descripcion.includes(x.clave))
     if(!c) return
 
-    if(f.precio > c.precio){
-      const dif = f.precio - c.precio
-      const desc = dif * f.cantidad
+    // prioridad: XML → Excel → 1
+    const piezasCaja = f.piezasCaja || c.piezasCaja || 1
+
+    const precioFacturaPieza = dividirSeguro(f.precioCaja, piezasCaja)
+    const piezasTotales = f.cajas * piezasCaja
+
+    if(precioFacturaPieza > c.precioPieza){
+      const dif = precioFacturaPieza - c.precioPieza
+      const desc = dif * piezasTotales
       total += desc
 
       tbody.innerHTML += `
         <tr>
           <td>${f.descripcion}</td>
-          <td>${c.precio.toFixed(2)}</td>
-          <td>${f.precio.toFixed(2)}</td>
-          <td>${f.cantidad}</td>
+          <td>${c.precioPieza.toFixed(2)}</td>
+          <td>${precioFacturaPieza.toFixed(2)}</td>
+          <td>${piezasTotales}</td>
           <td>+${dif.toFixed(2)}</td>
           <td>${desc.toFixed(2)}</td>
         </tr>
