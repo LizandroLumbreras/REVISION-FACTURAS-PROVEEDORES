@@ -104,10 +104,22 @@ function normalizar(t){
 
 // clave base para empatar productos
 function obtenerClave(descripcion){
-  const ignorar = ['DE','DEL','LA','EL','EN','Y','CON','SIN','ML','GR','KG','L']
+  const ignorar = [
+    'DE','DEL','LA','EL','EN','Y','CON','SIN',
+    'ML','GR','KG','L','BRICK','TETRA','MINI'
+  ]
+
   const partes = descripcion.split(' ')
-  return partes.find(p => p.length > 3 && !ignorar.includes(p)) || ''
+    .filter(p => p.length > 2 && !ignorar.includes(p))
+
+  // prioriza marca + sabor
+  if(partes.length >= 2){
+    return partes[0] + ' ' + partes[1]
+  }
+
+  return partes[0] || ''
 }
+
 function dividirSeguro(a,b){
   return b > 0 ? a / b : a
 }
@@ -181,7 +193,7 @@ const data = rows.slice(headerIndex + 1)
       piezasCaja: limpiarNumero(r[6]) || 1        // PIEZAS_X_CAJA
     }
   })
-  .filter(r => r.clave && r.precioPieza > 0)
+  .filter(r => r.clave)
 
 
       resolve(data)
@@ -204,9 +216,10 @@ const data = conceptos.map(c=>{
   const desc = normalizar(c.getAttribute('Descripcion'))
   return {
     descripcion: desc,
+    clave: obtenerClave(desc), // 👈 ESTA LÍNEA FALTABA
     cajas: limpiarNumero(c.getAttribute('Cantidad')),
     precioCaja: limpiarNumero(c.getAttribute('ValorUnitario')),
-    piezasCaja: extraerPiezasCaja(desc) // 👈 CLAVE
+    piezasCaja: extraerPiezasCaja(desc)
   }
 })
 
@@ -224,7 +237,9 @@ function comparar(cotizados, facturados){
   let total = 0
 
   facturados.forEach(f=>{
-    const c = cotizados.find(x => f.descripcion.includes(x.clave))
+  const c = cotizados.find(x =>
+  f.descripcion.includes(x.clave) || x.descripcion.includes(f.clave)
+)
     if(!c) return
 
     // detectar si el XML trae piezas
