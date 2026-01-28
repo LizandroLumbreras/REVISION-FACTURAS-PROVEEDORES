@@ -2,71 +2,45 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Comparador Cotización vs Factura</title>
+<title>Comparador Cotización vs Factura (BD)</title>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
 <style>
-body{
-  font-family: Arial, Helvetica, sans-serif;
-  background:#f4f6f9;
-  padding:20px;
-}
-h2{color:#00416A}
-select,input,button{
-  padding:8px;
-  margin:6px 6px 6px 0;
-}
-button{
-  background:#00416A;
-  color:#fff;
-  border:none;
-  cursor:pointer;
-}
-table{
-  width:100%;
-  border-collapse:collapse;
-  margin-top:20px;
-  background:#fff;
-}
-th,td{
-  border:1px solid #ccc;
-  padding:6px;
-  font-size:13px;
-  text-align:center;
-}
-th{
-  background:#00416A;
-  color:#fff;
-}
-.total{
-  margin-top:15px;
-  font-size:18px;
-  font-weight:bold;
-  color:#b00020;
-}
+body{font-family:Arial;background:#f4f6f9;padding:20px}
+select,button,input{padding:8px;margin:4px}
+button{background:#00416A;color:#fff;border:none;cursor:pointer}
+table{width:100%;border-collapse:collapse;margin-top:20px;background:#fff}
+th,td{border:1px solid #ccc;padding:6px;text-align:center}
+th{background:#00416A;color:#fff}
+.total{margin-top:15px;font-size:18px;font-weight:bold;color:#b00020}
+input[type=number]{width:70px}
 </style>
 </head>
 
 <body>
 
-<h2>📊 Comparador Cotización vs Factura</h2>
+<h2>📊 Comparador Cotización vs Factura (BD)</h2>
 
+<!-- 1️⃣ SELECTOR DE PROVEEDOR -->
 <label>Proveedor:</label>
 <select id="proveedor">
-  <option value="1">ABARROTES</option>
-  <option value="2">SAHUAYO</option>
-  <option value="3">DETALLE Y DISTRIBUCION</option>
-  <option value="4">DECASA</option>
+  <option value="">-- Selecciona --</option>
+  <option value="ABARROTES">ABARROTES</option>
+  <option value="DECASA">DECASA</option>
+  <option value="MAS BODEGA">MAS BODEGA</option>
 </select>
 
-<br>
+<button onclick="buscarFacturas()">Buscar facturas</button>
 
+<div id="listaFacturas"></div>
+
+<hr>
+
+<!-- 2️⃣ COTIZACIÓN -->
+<label>Cotización (Excel):</label>
 <input type="file" id="excelFile" accept=".xlsx,.xls">
-<input type="file" id="xmlFile" accept=".xml">
-
-<br>
-<button onclick="procesar()">COMPARAR</button>
 
 <table>
 <thead>
@@ -85,231 +59,150 @@ th{
 <div class="total" id="total"></div>
 
 <script>
-// ================= UTILIDADES =================
+/* ================= SUPABASE ================= */
+const supa = supabase.createClient(
+  "https://cvpbtjlupswbyxenugpz.supabase.co",
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2cGJ0amx1cHN3Ynl4ZW51Z3B6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc3MDIxOTQsImV4cCI6MjA2MzI3ODE5NH0.iiJsYM3TtaGPdeCtPcEXwAz3LfFc1uJGECEvOErvrqY"
+);
+
+let xmlActual = null;
+
+/* ================= UTILIDADES ================= */
 function limpiarNumero(v){
-  return parseFloat(String(v).replace(/[^\d.]/g,'')) || 0
+  return parseFloat(String(v).replace(/[^\d.]/g,'')) || 0;
 }
-
 function normalizar(t){
-  return String(t)
-    .toUpperCase()
-    .replace(/Á/g,'A')
-    .replace(/É/g,'E')
-    .replace(/Í/g,'I')
-    .replace(/Ó/g,'O')
-    .replace(/Ú/g,'U')
-    .replace(/\s+/g,' ')
-    .trim()
+  return String(t).toUpperCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+}
+function extraerPiezasCaja(desc){
+  const m = desc.match(/(\d+)\s*\/\s*\d+/);
+  return m ? parseInt(m[1]) : null;
 }
 
-// clave base para empatar productos
-function obtenerClave(descripcion){
-  const ignorar = [
-    'DE','DEL','LA','EL','EN','Y','CON','SIN',
-    'ML','GR','KG','L','BRICK','TETRA','MINI'
-  ]
+/* ================= 3️⃣ BUSCAR FACTURAS ================= */
+async function buscarFacturas(){
+  const proveedor = document.getElementById("proveedor").value;
+  if(!proveedor){ alert("Selecciona proveedor"); return }
 
-  const partes = descripcion.split(' ')
-    .filter(p => p.length > 2 && !ignorar.includes(p))
+  const { data, error } = await supa
+    .from("v_deuda_proveedores_v2")
+    .select("uuid_cfdi, proveedor, fecha, total, xml_texto, xml_url")
+    .ilike("proveedor", `%${proveedor}%`)
+    .order("fecha",{ascending:false});
 
-  // prioriza marca + sabor
-  if(partes.length >= 2){
-    return partes[0] + ' ' + partes[1]
+  if(error){ alert("Error al consultar BD"); return }
+
+  let html = "<h4>Facturas:</h4><ul>";
+  data.forEach(f=>{
+    html += `
+      <li>
+        ${f.fecha} — ${f.proveedor} — $${f.total}
+        <button onclick='cargarFactura(${JSON.stringify(f)})'>Usar</button>
+      </li>`;
+  });
+  html += "</ul>";
+
+  document.getElementById("listaFacturas").innerHTML = html;
+}
+
+/* ================= 4️⃣ CARGAR XML ================= */
+async function cargarFactura(f){
+  if(f.xml_texto){
+    xmlActual = f.xml_texto;
+  } else if(f.xml_url){
+    const res = await fetch(f.xml_url);
+    xmlActual = await res.text();
+  } else {
+    alert("Factura sin XML");
+    return;
   }
 
-  return partes[0] || ''
+  procesar();
 }
 
-function dividirSeguro(a,b){
-  return b > 0 ? a / b : a
-}
-
-function extraerPiezasCaja(descripcion){
-  // patrones tipo 12/237, 48/130, 30/250
-  const m = descripcion.match(/(\d+)\s*\/\s*\d+/)
-  if(m) return parseInt(m[1])
-
-  // patrones alternos
-  const patrones = [
-    /C\/\s*(\d+)/,
-    /CJ\s*(\d+)/,
-    /CAJA\s*(\d+)/,
-    /(\d+)\s*PZ/,
-    /(\d+)\s*PIEZAS/
-  ]
-
-  for(const p of patrones){
-    const x = descripcion.match(p)
-    if(x) return parseInt(x[1])
-  }
-
-  return null
-}
-
-// ================= PROCESO PRINCIPAL =================
+/* ================= 5️⃣ PROCESO ================= */
 async function procesar(){
-  const excel = excelFile.files[0]
-  const xml = xmlFile.files[0]
-  if(!excel || !xml){
-    alert('Sube el Excel y el XML')
-    return
+  if(!xmlActual || !excelFile.files[0]){
+    alert("Selecciona factura y cotización");
+    return;
   }
 
-  const proveedorIndex = parseInt(document.getElementById('proveedor').value)
+  const cotizados = await leerExcel(excelFile.files[0]);
+  const facturados = leerXML(xmlActual);
 
-  const cotizados = await leerExcel(excel, proveedorIndex)
-  const facturados = await leerXML(xml)
-
-  comparar(cotizados, facturados)
+  comparar(cotizados, facturados);
 }
 
-// ================= LECTURA EXCEL =================
-function leerExcel(file, colPrecio){
+/* ================= EXCEL ================= */
+function leerExcel(file){
   return new Promise(resolve=>{
-    const reader = new FileReader()
-    reader.onload = e=>{
-      const wb = XLSX.read(new Uint8Array(e.target.result), {type:'array'})
-      const ws = wb.Sheets[wb.SheetNames[0]]
-      const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''})
+    const r = new FileReader();
+    r.onload = e=>{
+      const wb = XLSX.read(new Uint8Array(e.target.result),{type:'array'});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws,{header:1});
+      const data = rows.slice(1).map(r=>{
+        const d = normalizar(r[0]);
+        return {
+          descripcion:d,
+          clave:d.split(" ").slice(0,2).join(" "),
+          precio:limpiarNumero(r[1])
+        }
+      }).filter(x=>x.precio>0);
+      resolve(data);
+    }
+    r.readAsArrayBuffer(file);
+  });
+}
 
-      const headerIndex = rows.findIndex(r =>
-        String(r[0]).toUpperCase().includes('DESCRIP')
-      )
-
-      if(headerIndex === -1){
-        alert('No se encontró DESCRIPCION en el Excel')
-        resolve([])
-        return
-      }
-
-const data = rows.slice(headerIndex + 1)
-  .map(r => {
-    const desc = normalizar(r[0])
+/* ================= XML ================= */
+function leerXML(txt){
+  const xml = new DOMParser().parseFromString(txt,"text/xml");
+  return [...xml.getElementsByTagName("cfdi:Concepto")].map(c=>{
+    const d = normalizar(c.getAttribute("Descripcion"));
     return {
-      descripcion: desc,
-      clave: obtenerClave(desc),
-      precioPieza: limpiarNumero(r[colPrecio]),   // precio por pieza
-      cajas: limpiarNumero(r[5]),
-      piezasCaja: limpiarNumero(r[6]) || 1        // PIEZAS_X_CAJA
+      descripcion:d,
+      cajas:limpiarNumero(c.getAttribute("Cantidad")),
+      precioCaja:limpiarNumero(c.getAttribute("ValorUnitario")),
+      piezasCaja:extraerPiezasCaja(d)
     }
-  })
-  .filter(r => r.clave)
-
-
-      resolve(data)
-    }
-    reader.readAsArrayBuffer(file)
-  })
+  });
 }
 
-// ================= LECTURA XML =================
-function leerXML(file){
-  return new Promise(resolve=>{
-    const reader = new FileReader()
-    reader.onload = e=>{
-      const xml = new DOMParser().parseFromString(e.target.result,'text/xml')
-
-      const conceptos = [...xml.getElementsByTagName('*')]
-        .filter(n => n.localName === 'Concepto')
-
-const data = conceptos.map(c=>{
-  const desc = normalizar(c.getAttribute('Descripcion'))
-  return {
-    descripcion: desc,
-    clave: obtenerClave(desc), // 👈 ESTA LÍNEA FALTABA
-    cajas: limpiarNumero(c.getAttribute('Cantidad')),
-    precioCaja: limpiarNumero(c.getAttribute('ValorUnitario')),
-    piezasCaja: extraerPiezasCaja(desc)
-  }
-})
-
-
-      resolve(data)
-    }
-    reader.readAsText(file)
-  })
-}
-
-// ================= COMPARACIÓN POR CLAVE =================
+/* ================= COMPARAR ================= */
 function comparar(cotizados, facturados){
-  const tbody = document.getElementById('tabla')
-  tbody.innerHTML = ''
-  let total = 0
+  const tbody = document.getElementById("tabla");
+  tbody.innerHTML="";
+  let total=0;
 
   facturados.forEach(f=>{
-  const c = cotizados.find(x =>
-  f.descripcion.includes(x.clave) || x.descripcion.includes(f.clave)
-)
-    if(!c) return
+    const c = cotizados.find(x=>f.descripcion.includes(x.clave));
+    if(!c) return;
 
-    // detectar si el XML trae piezas
-    const piezasCaja = f.piezasCaja ?? null
-    const tienePiezas = piezasCaja !== null
+    const pzas = f.piezasCaja || 1;
+    const unitFact = f.precioCaja / pzas;
+    const dif = unitFact - c.precio;
+    const desc = dif>0 ? dif * pzas * f.cajas : 0;
+    total += desc;
 
-    const piezasUsadas = tienePiezas ? piezasCaja : 1
-    const precioFacturaPieza = dividirSeguro(f.precioCaja, piezasUsadas)
-    const piezasTotales = f.cajas * piezasUsadas
+    tbody.innerHTML += `
+      <tr>
+        <td>${f.descripcion}</td>
+        <td>${c.precio.toFixed(2)}</td>
+        <td>${unitFact.toFixed(2)}</td>
+        <td>
+          <input type="number" value="${pzas}"
+            onchange="this.value=Math.max(1,this.value); procesar()">
+        </td>
+        <td>${dif.toFixed(2)}</td>
+        <td>${desc.toFixed(2)}</td>
+      </tr>`;
+  });
 
-    const dif = precioFacturaPieza - c.precioPieza
-    const desc = (tienePiezas && dif > 0) ? dif * piezasTotales : 0
-
-    // mostrar si hay diferencia o si falta capturar piezas
-    if (dif > 0 || !tienePiezas) {
-      total += desc
-
-      tbody.innerHTML += `
-        <tr ${!tienePiezas ? 'style="background:#fff7cc"' : ''}>
-          <td>${f.descripcion}</td>
-          <td>${c.precioPieza.toFixed(2)}</td>
-          <td>${precioFacturaPieza.toFixed(2)}</td>
-          <td>
-            <input type="number"
-                   value="${tienePiezas ? piezasCaja : ''}"
-                   min="1"
-                   placeholder="?"
-                   style="width:70px"
-                   onchange="recalcularFila(this, ${f.cajas}, ${c.precioPieza}, ${f.precioCaja})">
-          </td>
-          <td>${dif > 0 ? '+' + dif.toFixed(2) : '0.00'}</td>
-          <td>${desc.toFixed(2)}</td>
-        </tr>
-      `
-    }
-  })
-
-  document.getElementById('total').innerText =
-    'TOTAL A DESCONTAR: $ ' + total.toFixed(2)
+  document.getElementById("total").innerText =
+    "TOTAL A DESCONTAR: $ " + total.toFixed(2);
 }
-function recalcularFila(input, cajas, precioCotizado, precioCaja){
-  const piezasCaja = parseFloat(input.value) || 1
-
-  const precioUnitarioFactura = precioCaja / piezasCaja
-  const diferencia = precioUnitarioFactura - precioCotizado
-
-  const piezasTotales = piezasCaja * cajas
-  const descuento = diferencia > 0 ? diferencia * piezasTotales : 0
-
-  const fila = input.closest('tr')
-  fila.children[2].innerText = precioUnitarioFactura.toFixed(2)
-  fila.children[4].innerText = '+' + diferencia.toFixed(2)
-  fila.children[5].innerText = descuento.toFixed(2)
-
-  // tip visual opcional
-  input.title = `Piezas totales: ${piezasTotales}`
-
-  recalcularTotal()
-}
-
-function recalcularTotal(){
-  let total = 0
-  document.querySelectorAll('#tabla tr').forEach(tr=>{
-    const val = parseFloat(tr.children[5].innerText)
-    if(!isNaN(val)) total += val
-  })
-  document.getElementById('total').innerText =
-    'TOTAL A DESCONTAR: $ ' + total.toFixed(2)
-}
-
 </script>
 
 </body>
