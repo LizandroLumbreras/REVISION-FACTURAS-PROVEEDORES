@@ -78,16 +78,28 @@ function extraerPiezas(desc){
   const m = desc.match(/(\d+)\s*\/\s*\d+/);
   return m ? parseInt(m[1]) : null;
 }
+function limpiarPalabrasClave(texto) {
+  return texto
+    .replace(/[^A-Z\s]/g, "")
+    .split(" ")
+    .filter(p =>
+      p.length > 3 &&
+      !["ML", "GR", "KG", "PZ", "LT", "LITRO", "PAQ", "MAS"].includes(p)
+    );
+}
+
 function matchProducto(descFactura, descCotizacion) {
-  const f = descFactura.split(" ");
-  const c = descCotizacion.split(" ");
+  const f = limpiarPalabrasClave(descFactura);
+  const c = limpiarPalabrasClave(descCotizacion);
 
   let coincidencias = 0;
+
   f.forEach(p => {
-    if (p.length > 3 && c.includes(p)) coincidencias++;
+    if (c.includes(p)) coincidencias++;
   });
 
-  return coincidencias >= 2; // mínimo 2 palabras fuertes
+  // ✅ con UNA palabra fuerte ya lo aceptamos
+  return coincidencias >= 1;
 }
 
 /* ================= BUSCAR FACTURAS ================= */
