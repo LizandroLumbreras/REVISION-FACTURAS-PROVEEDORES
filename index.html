@@ -85,7 +85,7 @@ async function buscarFacturas(){
   if(!proveedorSel){ alert("Selecciona proveedor"); return }
 
   const { data, error } = await supa
-    .from("v_deuda_proveedores_v2")
+    .from("deuda_limpia_pdd")
     .select("uuid_cfdi, fecha, total, conceptos_detalle, razon_social_emisor")
     .ilike("razon_social_emisor", `%${proveedorSel}%`)
     .order("fecha",{ascending:false})
