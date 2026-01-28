@@ -92,34 +92,55 @@ function extraerPiezas(desc){
 }
 
 /* ---- tokens fuertes para matching ---- */
+/* ---- tokens fuertes para matching (CON MEDIDAS) ---- */
 const STOP = new Set([
   "PARA","CON","DEL","DE","LA","EL","LOS","LAS","Y","EN","AL","UN","UNA","UNO",
   "MAS","PROMO","PROMOCION","PRODUCTO","EXTRA","PACK","PAQ","PQT","CJA","CAJA"
 ]);
 
 function tokenNorm(tok){
-  tok = tok.replace(/[^A-Z0-9]/g,"");
+  tok = String(tok || "").replace(/[^A-Z0-9]/g,"");
   if (!tok) return "";
-  // singular básico (GALLETAS->GALLETA, MARIAS->MARIA, MARAVILLAS->MARAVILLA)
+
+  // Normaliza litros
+  tok = tok.replace(/LT$/,"L");
+
+  // Token de medida: 950ML, 177GR, 1KG, 2L, etc.
+  if (/^\d+(?:\.\d+)?(ML|GR|G|KG|L)$/.test(tok)) return tok;
+
+  // singular básico (GALLETAS->GALLETA)
   if (tok.length >= 5 && tok.endsWith("S")) tok = tok.slice(0, -1);
-  // quita unidades frecuentes como token
-  if (["GR","GRM","G","KG","ML","LT","L","PZ","PZA","PZA.","PZAS"].includes(tok)) return "";
+
   if (STOP.has(tok)) return "";
-  // descarta tokens muy cortos
   if (tok.length < 3) return "";
-  // descarta tokens que sean solo números
-  if (/^\d+$/.test(tok)) return "";
   return tok;
 }
 
 function tokensProducto(texto){
-  const t = normalizar(texto)
-    .replace(/\d+/g," ")               // quita números
-    .replace(/\b(GR|GRM|G|KG|ML|LT|L|PZ|PZA|PZAS)\b/g," ") // quita unidades sueltas
-    .replace(/\s+/g," ")
-    .trim();
+  let s = normalizar(texto);
 
-  return t.split(" ").map(tokenNorm).filter(Boolean);
+  // Convierte promos tipo "12/950 ML" -> "950ML" (nos interesa el tamaño real)
+  s = s.replace(/(\d+)\s*\/\s*(\d+)\s*(ML|GR|G|KG|LT|L)\b/g, "$2$3");
+
+  // Extrae medidas aunque vengan separadas "950 ML" o juntas "950ML"
+  const medidas = [];
+  s.replace(/(\d+(?:\.\d+)?)\s*(ML|GR|G|KG|LT|L)\b/g, (_, num, uni) => {
+    uni = uni.replace("LT","L");
+    medidas.push(tokenNorm(`${num}${uni}`));
+    return _;
+  });
+
+  // Quita las medidas del texto base para no duplicar
+  s = s.replace(/(\d+(?:\.\d+)?)\s*(ML|GR|G|KG|LT|L)\b/g, " ");
+
+  // Quita números sueltos que no sean medidas (ej: "12" de promo)
+  s = s.replace(/\b\d+\b/g, " ");
+
+  // Tokens de palabras
+  const palabras = s.split(" ").map(tokenNorm).filter(Boolean);
+
+  // Unifica y regresa
+  return Array.from(new Set([...palabras, ...medidas].filter(Boolean)));
 }
 
 function scoreMatch(tokensA, tokensB){
