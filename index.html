@@ -23,7 +23,6 @@ input[type=number]{width:70px}
 
 <h2>📊 Comparador Cotización vs Factura (BD)</h2>
 
-<!-- 1️⃣ SELECTOR DE PROVEEDOR -->
 <label>Proveedor:</label>
 <select id="proveedor">
   <option value="">-- Selecciona --</option>
@@ -38,7 +37,6 @@ input[type=number]{width:70px}
 
 <hr>
 
-<!-- 2️⃣ COTIZACIÓN -->
 <label>Cotización (Excel):</label>
 <input type="file" id="excelFile" accept=".xlsx,.xls">
 
@@ -62,146 +60,121 @@ input[type=number]{width:70px}
 /* ================= SUPABASE ================= */
 const supa = supabase.createClient(
   "https://cvpbtjlupswbyxenugpz.supabase.co",
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2cGJ0amx1cHN3Ynl4ZW51Z3B6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc3MDIxOTQsImV4cCI6MjA2MzI3ODE5NH0.iiJsYM3TtaGPdeCtPcEXwAz3LfFc1uJGECEvOErvrqY"
+  "TU_ANON_KEY_REAL"
 );
 
-let xmlActual = null;
+let conceptosFactura = [];
 
 /* ================= UTILIDADES ================= */
-function limpiarNumero(v){
-  return parseFloat(String(v).replace(/[^\d.]/g,'')) || 0;
-}
-function normalizar(t){
-  return String(t).toUpperCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g,"");
-}
-function extraerPiezasCaja(desc){
-  const m = desc.match(/(\d+)\s*\/\s*\d+/);
-  return m ? parseInt(m[1]) : null;
+const num = v => parseFloat(v) || 0;
+const norm = t => String(t).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+
+function piezasDesdeDescripcion(d){
+  const m = d.match(/(\d+)\s*\/\s*\d+/);
+  return m ? parseInt(m[1]) : 1;
 }
 
-/* ================= 3️⃣ BUSCAR FACTURAS ================= */
+/* ================= BUSCAR FACTURAS ================= */
 async function buscarFacturas(){
-  const proveedor = document.getElementById("proveedor").value;
-  if(!proveedor){ alert("Selecciona proveedor"); return }
+  const proveedor = proveedor.value;
+  if(!proveedor) return alert("Selecciona proveedor");
 
   const { data, error } = await supa
-    .from("v_deuda_proveedores_v2")
-    .select("uuid_cfdi, proveedor, fecha, total, xml_texto, xml_url")
-    .ilike("proveedor", `%${proveedor}%`)
-    .order("fecha",{ascending:false});
+    .from("deuda_limpia_pdd")
+    .select("uuid_cfdi, razon_social_emisor, fecha, total, conceptos_detalle")
+    .ilike("razon_social_emisor", `%${proveedor}%`)
+    .order("fecha", { ascending:false });
 
-  if(error){ alert("Error al consultar BD"); return }
+  if(error){
+    console.error(error);
+    return alert("Error BD");
+  }
 
-  let html = "<h4>Facturas:</h4><ul>";
+  let html = "<ul>";
   data.forEach(f=>{
     html += `
       <li>
-        ${f.fecha} — ${f.proveedor} — $${f.total}
-        <button onclick='cargarFactura(${JSON.stringify(f)})'>Usar</button>
+        ${f.fecha} — ${f.razon_social_emisor} — $${f.total}
+        <button onclick='usarFactura(${JSON.stringify(f)})'>Usar</button>
       </li>`;
   });
   html += "</ul>";
 
-  document.getElementById("listaFacturas").innerHTML = html;
+  listaFacturas.innerHTML = html;
 }
 
-/* ================= 4️⃣ CARGAR XML ================= */
-async function cargarFactura(f){
-  if(f.xml_texto){
-    xmlActual = f.xml_texto;
-  } else if(f.xml_url){
-    const res = await fetch(f.xml_url);
-    xmlActual = await res.text();
-  } else {
-    alert("Factura sin XML");
-    return;
-  }
-
+/* ================= USAR FACTURA ================= */
+function usarFactura(f){
+  conceptosFactura = f.conceptos_detalle;
   procesar();
 }
 
-/* ================= 5️⃣ PROCESO ================= */
+/* ================= PROCESAR ================= */
 async function procesar(){
-  if(!xmlActual || !excelFile.files[0]){
+  if(!excelFile.files[0] || !conceptosFactura.length){
     alert("Selecciona factura y cotización");
     return;
   }
 
   const cotizados = await leerExcel(excelFile.files[0]);
-  const facturados = leerXML(xmlActual);
+
+  const facturados = conceptosFactura.map(c=>{
+    return {
+      descripcion: norm(c.descripcion),
+      cajas: num(c.cantidad),
+      precioCaja: num(c.valorUnitario),
+      piezasCaja: piezasDesdeDescripcion(c.descripcion)
+    }
+  });
 
   comparar(cotizados, facturados);
 }
 
 /* ================= EXCEL ================= */
 function leerExcel(file){
-  return new Promise(resolve=>{
+  return new Promise(res=>{
     const r = new FileReader();
     r.onload = e=>{
       const wb = XLSX.read(new Uint8Array(e.target.result),{type:'array'});
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws,{header:1});
-      const data = rows.slice(1).map(r=>{
-        const d = normalizar(r[0]);
-        return {
-          descripcion:d,
-          clave:d.split(" ").slice(0,2).join(" "),
-          precio:limpiarNumero(r[1])
-        }
-      }).filter(x=>x.precio>0);
-      resolve(data);
-    }
+      res(
+        rows.slice(1).map(r=>{
+          const d = norm(r[0]);
+          return { clave:d.split(" ").slice(0,2).join(" "), precio:num(r[1]) }
+        }).filter(x=>x.precio>0)
+      );
+    };
     r.readAsArrayBuffer(file);
-  });
-}
-
-/* ================= XML ================= */
-function leerXML(txt){
-  const xml = new DOMParser().parseFromString(txt,"text/xml");
-  return [...xml.getElementsByTagName("cfdi:Concepto")].map(c=>{
-    const d = normalizar(c.getAttribute("Descripcion"));
-    return {
-      descripcion:d,
-      cajas:limpiarNumero(c.getAttribute("Cantidad")),
-      precioCaja:limpiarNumero(c.getAttribute("ValorUnitario")),
-      piezasCaja:extraerPiezasCaja(d)
-    }
   });
 }
 
 /* ================= COMPARAR ================= */
 function comparar(cotizados, facturados){
-  const tbody = document.getElementById("tabla");
-  tbody.innerHTML="";
+  tabla.innerHTML="";
   let total=0;
 
   facturados.forEach(f=>{
     const c = cotizados.find(x=>f.descripcion.includes(x.clave));
     if(!c) return;
 
-    const pzas = f.piezasCaja || 1;
-    const unitFact = f.precioCaja / pzas;
+    const unitFact = f.precioCaja / f.piezasCaja;
     const dif = unitFact - c.precio;
-    const desc = dif>0 ? dif * pzas * f.cajas : 0;
+    const desc = dif>0 ? dif * f.piezasCaja * f.cajas : 0;
     total += desc;
 
-    tbody.innerHTML += `
+    tabla.innerHTML += `
       <tr>
         <td>${f.descripcion}</td>
         <td>${c.precio.toFixed(2)}</td>
         <td>${unitFact.toFixed(2)}</td>
-        <td>
-          <input type="number" value="${pzas}"
-            onchange="this.value=Math.max(1,this.value); procesar()">
-        </td>
+        <td>${f.piezasCaja}</td>
         <td>${dif.toFixed(2)}</td>
         <td>${desc.toFixed(2)}</td>
       </tr>`;
   });
 
-  document.getElementById("total").innerText =
-    "TOTAL A DESCONTAR: $ " + total.toFixed(2);
+  totalDiv.innerText = "TOTAL A DESCONTAR: $ " + total.toFixed(2);
 }
 </script>
 
