@@ -85,6 +85,44 @@ function limpiarNumero(v){
   const n = parseFloat(s);
   return isNaN(n) ? 0 : n;
 }
+function precioCajaConImpuestos(c){
+  // cantidad de cajas (en la tabla "Cant")
+  const cajas = limpiarNumero(c.cantidad ?? c.cant ?? c.Cant ?? c.CANT);
+
+  // subtotal/importe de la línea (ya viene multiplicado por cantidad)
+  const subtotalLinea = limpiarNumero(
+    c.subtotal ?? c.Subtotal ?? c.importe ?? c.Importe ?? c.IMPORTE
+  );
+
+  // IVA e IEPS de la línea (si vienen directos)
+  let iva  = limpiarNumero(c.iva  ?? c.IVA  ?? c.importe_iva  ?? c.iva_importe);
+  let ieps = limpiarNumero(c.ieps ?? c.IEPS ?? c.importe_ieps ?? c.ieps_importe);
+
+  // Si en tu JSON vienen impuestos anidados (CFDI/supabase a veces lo trae así)
+  // ejemplo: c.impuestos.traslados = [{ impuesto:"002", importe: 10.5 }, { impuesto:"003", importe: 2.1 }]
+  if ((!iva && !ieps) && c.impuestos && Array.isArray(c.impuestos.traslados)) {
+    for (const t of c.impuestos.traslados) {
+      const imp = String(t.impuesto ?? t.Impuesto ?? "").trim();
+      const impImporte = limpiarNumero(t.importe ?? t.Importe ?? t.importeImpuesto);
+      if (imp === "002") iva += impImporte;   // IVA
+      if (imp === "003") ieps += impImporte;  // IEPS
+    }
+  }
+
+  // total de la línea con impuestos (descuento NO se usa)
+  let totalLinea = subtotalLinea + iva + ieps;
+
+  // fallback si NO vino subtotal/iva/ieps:
+  // usa unitario * cajas (unitario es por caja)
+  if (!totalLinea || totalLinea <= 0) {
+    const unit = limpiarNumero(c.unitario ?? c.Unitario ?? c.valorUnitario ?? c.valor_unitario);
+    totalLinea = unit * (cajas || 1);
+  }
+
+  // precio por caja con impuestos
+  return cajas > 0 ? (totalLinea / cajas) : 0;
+}
+
 
 function extraerPiezas(desc){
   const m = String(desc ?? "").match(/(\d+)\s*\/\s*\d+/);
@@ -191,14 +229,21 @@ function usarFactura(conceptos){
   }
   if (!Array.isArray(arr)) arr = [];
 
-  conceptosFactura = arr.map(c=>({
-    descripcionRaw: c.descripcion || "",
-    descripcion: normalizar(c.descripcion),
-    tokens: tokensProducto(c.descripcion),
-    cajas: limpiarNumero(c.cantidad),
-    precioCaja: limpiarNumero(c.valorUnitario),
-    piezasCaja: extraerPiezas(c.descripcion)
-  }));
+conceptosFactura = arr.map(c=>({
+  descripcionRaw: c.descripcion || "",
+  descripcion: normalizar(c.descripcion),
+  tokens: tokensProducto(c.descripcion),
+
+  // cantidad cajas
+  cajas: limpiarNumero(c.cantidad ?? c.cant ?? c.Cant ?? c.CANT),
+
+  // ✅ precio por caja con impuestos incluidos (Subtotal + IVA + IEPS)
+  // ❌ Descuento NO se toma
+  precioCaja: precioCajaConImpuestos(c),
+
+  piezasCaja: extraerPiezas(c.descripcion)
+}));
+
 
   procesar();
 }
@@ -208,14 +253,13 @@ async function procesar(){
   const proveedorSel = document.getElementById("proveedor").value;
   const file = document.getElementById("excelFile").files[0];
 
-  if(!conceptosFactura.length || !file){
-    alert("Selecciona factura y cotización");
-    return;
-  }
+  // si aún no hay factura o excel, no hagas nada (sin alert)
+  if (!conceptosFactura.length || !file) return;
 
   cotizadosCache = await leerExcel(file, proveedorSel);
   comparar(cotizadosCache, conceptosFactura);
 }
+
 
 /* ================= LEER EXCEL (MATRIZ POR PROVEEDOR) ================= */
 function leerExcel(file, proveedorSel){
