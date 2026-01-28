@@ -65,46 +65,70 @@ const supa = supabase.createClient(
 );
 
 let conceptosFactura = [];
+let cotizadosCache = [];
 
 /* ================= UTILIDADES ================= */
 function normalizar(t){
-  return String(t).toUpperCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+  return String(t ?? "").toUpperCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+    .replace(/\./g," ")
+    .replace(/[+]/g," ")
+    .replace(/[^A-Z0-9\s/]/g," ")
+    .replace(/\s+/g," ")
+    .trim();
 }
+
 function limpiarNumero(v){
-  return parseFloat(v) || 0;
+  if (v === null || v === undefined) return 0;
+  // soporta "11.45", "$ 11.45", "11,45"
+  const s = String(v).replace(/\$/g,"").replace(/,/g,".").replace(/\s/g,"");
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
 }
+
 function extraerPiezas(desc){
-  const m = desc.match(/(\d+)\s*\/\s*\d+/);
+  const m = String(desc ?? "").match(/(\d+)\s*\/\s*\d+/);
   return m ? parseInt(m[1]) : null;
 }
-function limpiarPalabrasClave(texto) {
-  return texto
-    .replace(/[^A-Z\s]/g, "")
-    .split(" ")
-    .filter(p =>
-      p.length > 3 &&
-      !["ML", "GR", "KG", "PZ", "LT", "LITRO", "PAQ", "MAS"].includes(p)
-    );
+
+/* ---- tokens fuertes para matching ---- */
+const STOP = new Set([
+  "PARA","CON","DEL","DE","LA","EL","LOS","LAS","Y","EN","AL","UN","UNA","UNO",
+  "MAS","PROMO","PROMOCION","PRODUCTO","EXTRA","PACK","PAQ","PQT","CJA","CAJA"
+]);
+
+function tokenNorm(tok){
+  tok = tok.replace(/[^A-Z0-9]/g,"");
+  if (!tok) return "";
+  // singular básico (GALLETAS->GALLETA, MARIAS->MARIA, MARAVILLAS->MARAVILLA)
+  if (tok.length >= 5 && tok.endsWith("S")) tok = tok.slice(0, -1);
+  // quita unidades frecuentes como token
+  if (["GR","GRM","G","KG","ML","LT","L","PZ","PZA","PZA.","PZAS"].includes(tok)) return "";
+  if (STOP.has(tok)) return "";
+  // descarta tokens muy cortos
+  if (tok.length < 3) return "";
+  // descarta tokens que sean solo números
+  if (/^\d+$/.test(tok)) return "";
+  return tok;
 }
 
-function matchProducto(descFactura, descCotizacion) {
-  const limpiar = t =>
-    t
-      .replace(/\d+/g, "")           // quita números
-      .replace(/GR|G|ML|LT|KG/g, "") // quita unidades
-      .replace(/\s+/g, " ")
-      .trim();
+function tokensProducto(texto){
+  const t = normalizar(texto)
+    .replace(/\d+/g," ")               // quita números
+    .replace(/\b(GR|GRM|G|KG|ML|LT|L|PZ|PZA|PZAS)\b/g," ") // quita unidades sueltas
+    .replace(/\s+/g," ")
+    .trim();
 
-  const f = limpiar(descFactura).split(" ");
-  const c = limpiar(descCotizacion).split(" ");
+  return t.split(" ").map(tokenNorm).filter(Boolean);
+}
 
+function scoreMatch(tokensA, tokensB){
+  if (!tokensA.length || !tokensB.length) return {score:0, hits:0};
+  const setB = new Set(tokensB);
   let hits = 0;
-  f.forEach(p => {
-    if (p.length >= 4 && c.includes(p)) hits++;
-  });
-
-  return hits >= 1; // 🔥 SOLO 1 palabra fuerte
+  for (const x of tokensA) if (setB.has(x)) hits++;
+  const score = hits / Math.max(tokensA.length, tokensB.length);
+  return {score, hits};
 }
 
 /* ================= BUSCAR FACTURAS ================= */
@@ -129,7 +153,7 @@ async function buscarFacturas(){
   data.forEach(f=>{
     html += `
       <li>
-        ${f.fecha.split("T")[0]} — $${f.total}
+        ${String(f.fecha).split("T")[0]} — $${f.total}
         <button onclick='usarFactura(${JSON.stringify(f.conceptos_detalle)})'>Usar</button>
       </li>`;
   });
@@ -139,103 +163,163 @@ async function buscarFacturas(){
 
 /* ================= USAR FACTURA ================= */
 function usarFactura(conceptos){
-  conceptosFactura = conceptos.map(c=>({
+  // conceptos_detalle puede venir como array o como string JSON
+  let arr = conceptos;
+  if (typeof arr === "string") {
+    try { arr = JSON.parse(arr); } catch(e) { arr = []; }
+  }
+  if (!Array.isArray(arr)) arr = [];
+
+  conceptosFactura = arr.map(c=>({
+    descripcionRaw: c.descripcion || "",
     descripcion: normalizar(c.descripcion),
+    tokens: tokensProducto(c.descripcion),
     cajas: limpiarNumero(c.cantidad),
     precioCaja: limpiarNumero(c.valorUnitario),
     piezasCaja: extraerPiezas(c.descripcion)
   }));
+
   procesar();
 }
 
 /* ================= PROCESAR ================= */
 async function procesar(){
-  if(!conceptosFactura.length || !excelFile.files[0]){
+  const proveedorSel = document.getElementById("proveedor").value;
+  const file = document.getElementById("excelFile").files[0];
+
+  if(!conceptosFactura.length || !file){
     alert("Selecciona factura y cotización");
     return;
   }
-const cotizados = await leerExcel(excelFile.files[0]);
-window._cotizados = cotizados; // cache
-comparar(cotizados, conceptosFactura);
+
+  cotizadosCache = await leerExcel(file, proveedorSel);
+  comparar(cotizadosCache, conceptosFactura);
 }
 
-/* ================= EXCEL ================= */
-function leerExcel(file){
+/* ================= LEER EXCEL (MATRIZ POR PROVEEDOR) ================= */
+function leerExcel(file, proveedorSel){
   return new Promise(resolve=>{
     const r = new FileReader();
     r.onload = e=>{
       const wb = XLSX.read(new Uint8Array(e.target.result),{type:'array'});
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws,{header:1});
-      const data = rows.slice(1).map(r=>{
-       const desc = limpiarTextoProducto(r[0]);
 
-return {
-  descripcion: desc,
-  tokens: obtenerTokensClave(desc),
-  precio: limpiarNumero(r[1])
-}
+      const prov = normalizar(proveedorSel);
 
-      }).filter(x=>x.precio>0);
-      resolve(data);
-    }
+      // 1) Buscar una hoja donde en alguna fila esté el nombre del proveedor (encabezado matriz)
+      let best = null;
+
+      for (const shName of wb.SheetNames){
+        const ws = wb.Sheets[shName];
+        const rows = XLSX.utils.sheet_to_json(ws,{header:1, raw:true});
+
+        // Buscar fila que tenga "DESCRIPCION" y, arriba o en la misma, el proveedor
+        let headerRowIdx = -1;
+        for (let i=0; i<Math.min(rows.length, 20); i++){
+          const row = rows[i] || [];
+          const rowStr = row.map(x=>normalizar(x)).join(" | ");
+          if (rowStr.includes("DESCRIPCION")) { headerRowIdx = i; break; }
+        }
+        if (headerRowIdx === -1) continue;
+
+        // Buscar columna del proveedor en fila headerRowIdx-1 o headerRowIdx
+        const r1 = rows[headerRowIdx-1] || [];
+        const r2 = rows[headerRowIdx] || [];
+
+        let colProv = -1;
+
+        // intenta en fila de arriba (como tu matriz: fila 2 trae ABARROTES/DECASA)
+        for (let j=0; j<r1.length; j++){
+          if (normalizar(r1[j]) === prov) { colProv = j; break; }
+        }
+        // fallback: intenta en la misma fila
+        if (colProv === -1){
+          for (let j=0; j<r2.length; j++){
+            if (normalizar(r2[j]) === prov) { colProv = j; break; }
+          }
+        }
+
+        if (colProv === -1) continue;
+
+        best = {shName, rows, start: headerRowIdx+1, colDesc: 0, colPrice: colProv};
+        break;
+      }
+
+      // 2) Fallback si no se encontró estructura matriz: hoja 1, col A desc, col B precio
+      if (!best){
+        const shName = wb.SheetNames[0];
+        const ws = wb.Sheets[shName];
+        const rows = XLSX.utils.sheet_to_json(ws,{header:1, raw:true});
+        best = {shName, rows, start: 1, colDesc: 0, colPrice: 1};
+      }
+
+      const out = [];
+      for (let i=best.start; i<best.rows.length; i++){
+        const row = best.rows[i] || [];
+        const desc = row[best.colDesc];
+        if (!desc) continue;
+
+        const precio = limpiarNumero(row[best.colPrice]);
+        if (!precio || precio <= 0) continue;
+
+        const descNorm = normalizar(desc);
+
+        out.push({
+          descripcionRaw: String(desc),
+          descripcion: descNorm,
+          tokens: tokensProducto(descNorm),
+          precio
+        });
+      }
+
+      resolve(out);
+    };
     r.readAsArrayBuffer(file);
   });
 }
-function limpiarTextoProducto(txt){
-  return normalizar(txt)
-    .replace(/\./g, "")
-    .replace(/\s+/g, " ")
-    .replace(/GRAMOS?/g, "GR")
-    .replace(/MILILITROS?/g, "ML")
-    .trim();
-}
 
-function obtenerTokensClave(txt){
-  return limpiarTextoProducto(txt)
-    .split(" ")
-    .filter(p =>
-      p.length > 3 &&
-      !["PARA","CON","MAS","DEL","LAS","LOS","UNA","UNO"].includes(p)
-    );
-}
-
-/* ================= COMPARAR ================= */
+/* ================= COMPARAR (MATCH POR SCORE) ================= */
 function comparar(cotizados, facturados){
   const tbody = document.getElementById("tabla");
   tbody.innerHTML="";
   let total=0;
 
   facturados.forEach((f, idx)=>{
-const descFactura = limpiarTextoProducto(f.descripcion);
-const tokensFactura = obtenerTokensClave(descFactura);
+    // piezas
+    const pzas = (f.piezasCaja && f.piezasCaja > 0) ? Number(f.piezasCaja) : 1;
 
-const c = cotizados.find(x => {
-  let coincidencias = 0;
-  tokensFactura.forEach(t => {
-    if (x.tokens.includes(t)) coincidencias++;
-  });
-  return coincidencias >= 2;
-});
-    const precioCotizado = c ? c.precio : 0;
-
-   const pzas = f.piezasCaja && f.piezasCaja > 0
-  ? Number(f.piezasCaja)
-  : 1;
-
+    // precio unitario factura
     const precioUnitFact = f.precioCaja / pzas;
-   const diferencia = c ? (precioUnitFact - c.precio) : 0;
 
-const descuento = c && diferencia > 0
-  ? diferencia * pzas * f.cajas
-  : 0;
+    // buscar mejor match
+    let best = null;
+    let bestScore = 0;
+    let bestHits = 0;
+
+    for (const x of cotizados){
+      const {score, hits} = scoreMatch(f.tokens, x.tokens);
+      if (score > bestScore || (score === bestScore && hits > bestHits)){
+        bestScore = score;
+        bestHits = hits;
+        best = x;
+      }
+    }
+
+    // umbral: 2 hits o score >= 0.55
+    const ok = best && (bestHits >= 2 || bestScore >= 0.55);
+
+    const precioCot = ok ? best.precio : 0;
+    const diferencia = ok ? (precioUnitFact - precioCot) : 0;
+
+    const descuento = (ok && diferencia > 0)
+      ? diferencia * pzas * f.cajas
+      : 0;
 
     total += descuento;
 
     tbody.innerHTML += `
-      <tr class="${!c ? 'falta' : (!f.piezasCaja ? 'falta' : '')}">
+      <tr class="${!ok ? 'falta' : (!f.piezasCaja ? 'falta' : '')}">
         <td>${f.descripcion}</td>
-        <td>${c ? c.precio.toFixed(2) : "—"}</td>
+        <td>${ok ? precioCot.toFixed(2) : "—"}</td>
         <td>${precioUnitFact.toFixed(2)}</td>
         <td>
           <input type="number" min="1" value="${pzas}"
@@ -249,17 +333,13 @@ const descuento = c && diferencia > 0
   document.getElementById("total").innerText =
     "TOTAL A DESCONTAR: $ " + total.toFixed(2);
 }
-  function actualizarPiezas(idx, valor){
+
+/* ================= RECALCULO PZAS ================= */
+function actualizarPiezas(idx, valor){
   const pzas = Math.max(1, parseInt(valor) || 1);
   conceptosFactura[idx].piezasCaja = pzas;
-  recalcular();
-}
-function recalcular(){
-  const cotizadosCache = window._cotizados;
-  if(!cotizadosCache) return;
   comparar(cotizadosCache, conceptosFactura);
 }
-
 </script>
 
 </body>
