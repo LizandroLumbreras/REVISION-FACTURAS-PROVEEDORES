@@ -78,7 +78,17 @@ function extraerPiezas(desc){
   const m = desc.match(/(\d+)\s*\/\s*\d+/);
   return m ? parseInt(m[1]) : null;
 }
+function matchProducto(descFactura, descCotizacion) {
+  const f = descFactura.split(" ");
+  const c = descCotizacion.split(" ");
 
+  let coincidencias = 0;
+  f.forEach(p => {
+    if (p.length > 3 && c.includes(p)) coincidencias++;
+  });
+
+  return coincidencias >= 2; // mínimo 2 palabras fuertes
+}
 /* ================= BUSCAR FACTURAS ================= */
 async function buscarFacturas(){
   const proveedorSel = document.getElementById("proveedor").value;
@@ -160,24 +170,26 @@ function comparar(cotizados, facturados){
   let total=0;
 
   facturados.forEach((f, idx)=>{
-    const c = cotizados.find(x => f.descripcion.includes(x.clave));
-    if(!c) return;
+   const c = cotizados.find(x =>
+  matchProducto(f.descripcion, x.descripcion)
+);
+    const precioCotizado = c ? c.precio : 0;
 
    const pzas = f.piezasCaja && f.piezasCaja > 0
   ? Number(f.piezasCaja)
   : 1;
 
     const precioUnitFact = f.precioCaja / pzas;
-    const diferencia = precioUnitFact - c.precio;
+   const diferencia = c ? (precioUnitFact - c.precio) : 0;
 
-    const descuento = diferencia > 0
-      ? diferencia * pzas * f.cajas
-      : 0;
+const descuento = c && diferencia > 0
+  ? diferencia * pzas * f.cajas
+  : 0;
 
     total += descuento;
 
     tbody.innerHTML += `
-      <tr class="${!f.piezasCaja?'falta':''}">
+      <tr class="${!c ? 'falta' : (!f.piezasCaja ? 'falta' : '')}">
         <td>${f.descripcion}</td>
         <td>${c.precio.toFixed(2)}</td>
         <td>${precioUnitFact.toFixed(2)}</td>
