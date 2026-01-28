@@ -89,17 +89,22 @@ function limpiarPalabrasClave(texto) {
 }
 
 function matchProducto(descFactura, descCotizacion) {
-  const f = limpiarPalabrasClave(descFactura);
-  const c = limpiarPalabrasClave(descCotizacion);
+  const limpiar = t =>
+    t
+      .replace(/\d+/g, "")           // quita números
+      .replace(/GR|G|ML|LT|KG/g, "") // quita unidades
+      .replace(/\s+/g, " ")
+      .trim();
 
-  let coincidencias = 0;
+  const f = limpiar(descFactura).split(" ");
+  const c = limpiar(descCotizacion).split(" ");
 
+  let hits = 0;
   f.forEach(p => {
-    if (c.includes(p)) coincidencias++;
+    if (p.length >= 4 && c.includes(p)) hits++;
   });
 
-  // ✅ con UNA palabra fuerte ya lo aceptamos
-  return coincidencias >= 1;
+  return hits >= 1; // 🔥 SOLO 1 palabra fuerte
 }
 
 /* ================= BUSCAR FACTURAS ================= */
