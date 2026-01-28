@@ -5,7 +5,7 @@
 <title>Comparador Cotización vs Factura (BD)</title>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.7/dist/umd/supabase.min.js"></script>
 
 <style>
 body{font-family:Arial;background:#f4f6f9;padding:20px}
@@ -16,6 +16,7 @@ th,td{border:1px solid #ccc;padding:6px;text-align:center}
 th{background:#00416A;color:#fff}
 .total{margin-top:15px;font-size:18px;font-weight:bold;color:#b00020}
 input[type=number]{width:70px}
+tr.falta{background:#fff6c2}
 </style>
 </head>
 
@@ -60,121 +61,129 @@ input[type=number]{width:70px}
 /* ================= SUPABASE ================= */
 const supa = supabase.createClient(
   "https://cvpbtjlupswbyxenugpz.supabase.co",
-  "TU_ANON_KEY_REAL"
+  "TU_ANON_KEY_AQUI"
 );
 
 let conceptosFactura = [];
 
 /* ================= UTILIDADES ================= */
-const num = v => parseFloat(v) || 0;
-const norm = t => String(t).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
-
-function piezasDesdeDescripcion(d){
-  const m = d.match(/(\d+)\s*\/\s*\d+/);
-  return m ? parseInt(m[1]) : 1;
+function normalizar(t){
+  return String(t).toUpperCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+}
+function limpiarNumero(v){
+  return parseFloat(v) || 0;
+}
+function extraerPiezas(desc){
+  const m = desc.match(/(\d+)\s*\/\s*\d+/);
+  return m ? parseInt(m[1]) : null;
 }
 
 /* ================= BUSCAR FACTURAS ================= */
 async function buscarFacturas(){
-  const proveedor = proveedor.value;
-  if(!proveedor) return alert("Selecciona proveedor");
+  const proveedorSel = document.getElementById("proveedor").value;
+  if(!proveedorSel){ alert("Selecciona proveedor"); return }
 
   const { data, error } = await supa
-    .from("deuda_limpia_pdd")
-    .select("uuid_cfdi, razon_social_emisor, fecha, total, conceptos_detalle")
-    .ilike("razon_social_emisor", `%${proveedor}%`)
-    .order("fecha", { ascending:false });
+    .from("v_deuda_proveedores_v2")
+    .select("uuid_cfdi, fecha, total, conceptos_detalle, razon_social_emisor")
+    .ilike("razon_social_emisor", `%${proveedorSel}%`)
+    .order("fecha",{ascending:false})
+    .limit(10);
 
   if(error){
     console.error(error);
-    return alert("Error BD");
+    alert("Error al consultar BD");
+    return;
   }
 
-  let html = "<ul>";
+  let html = "<h4>Facturas:</h4><ul>";
   data.forEach(f=>{
     html += `
       <li>
-        ${f.fecha} — ${f.razon_social_emisor} — $${f.total}
-        <button onclick='usarFactura(${JSON.stringify(f)})'>Usar</button>
+        ${f.fecha.split("T")[0]} — $${f.total}
+        <button onclick='usarFactura(${JSON.stringify(f.conceptos_detalle)})'>Usar</button>
       </li>`;
   });
   html += "</ul>";
-
-  listaFacturas.innerHTML = html;
+  document.getElementById("listaFacturas").innerHTML = html;
 }
 
 /* ================= USAR FACTURA ================= */
-function usarFactura(f){
-  conceptosFactura = f.conceptos_detalle;
+function usarFactura(conceptos){
+  conceptosFactura = conceptos.map(c=>({
+    descripcion: normalizar(c.descripcion),
+    cajas: limpiarNumero(c.cantidad),
+    precioCaja: limpiarNumero(c.valorUnitario),
+    piezasCaja: extraerPiezas(c.descripcion)
+  }));
   procesar();
 }
 
 /* ================= PROCESAR ================= */
 async function procesar(){
-  if(!excelFile.files[0] || !conceptosFactura.length){
+  if(!conceptosFactura.length || !excelFile.files[0]){
     alert("Selecciona factura y cotización");
     return;
   }
-
   const cotizados = await leerExcel(excelFile.files[0]);
-
-  const facturados = conceptosFactura.map(c=>{
-    return {
-      descripcion: norm(c.descripcion),
-      cajas: num(c.cantidad),
-      precioCaja: num(c.valorUnitario),
-      piezasCaja: piezasDesdeDescripcion(c.descripcion)
-    }
-  });
-
-  comparar(cotizados, facturados);
+  comparar(cotizados, conceptosFactura);
 }
 
 /* ================= EXCEL ================= */
 function leerExcel(file){
-  return new Promise(res=>{
+  return new Promise(resolve=>{
     const r = new FileReader();
     r.onload = e=>{
       const wb = XLSX.read(new Uint8Array(e.target.result),{type:'array'});
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws,{header:1});
-      res(
-        rows.slice(1).map(r=>{
-          const d = norm(r[0]);
-          return { clave:d.split(" ").slice(0,2).join(" "), precio:num(r[1]) }
-        }).filter(x=>x.precio>0)
-      );
-    };
+      const data = rows.slice(1).map(r=>{
+        const d = normalizar(r[0]);
+        return {
+          descripcion:d,
+          clave:d.split(" ").slice(0,2).join(" "),
+          precio:limpiarNumero(r[1])
+        }
+      }).filter(x=>x.precio>0);
+      resolve(data);
+    }
     r.readAsArrayBuffer(file);
   });
 }
 
 /* ================= COMPARAR ================= */
 function comparar(cotizados, facturados){
-  tabla.innerHTML="";
+  const tbody = document.getElementById("tabla");
+  tbody.innerHTML="";
   let total=0;
 
   facturados.forEach(f=>{
     const c = cotizados.find(x=>f.descripcion.includes(x.clave));
     if(!c) return;
 
-    const unitFact = f.precioCaja / f.piezasCaja;
+    const pzas = f.piezasCaja || 1;
+    const unitFact = f.precioCaja / pzas;
     const dif = unitFact - c.precio;
-    const desc = dif>0 ? dif * f.piezasCaja * f.cajas : 0;
+    const desc = dif>0 ? dif * pzas * f.cajas : 0;
     total += desc;
 
-    tabla.innerHTML += `
-      <tr>
+    tbody.innerHTML += `
+      <tr class="${!f.piezasCaja?'falta':''}">
         <td>${f.descripcion}</td>
         <td>${c.precio.toFixed(2)}</td>
         <td>${unitFact.toFixed(2)}</td>
-        <td>${f.piezasCaja}</td>
+        <td>
+          <input type="number" value="${pzas}" min="1"
+            onchange="f.piezasCaja=this.value; procesar()">
+        </td>
         <td>${dif.toFixed(2)}</td>
         <td>${desc.toFixed(2)}</td>
       </tr>`;
   });
 
-  totalDiv.innerText = "TOTAL A DESCONTAR: $ " + total.toFixed(2);
+  document.getElementById("total").innerText =
+    "TOTAL A DESCONTAR: $ " + total.toFixed(2);
 }
 </script>
 
