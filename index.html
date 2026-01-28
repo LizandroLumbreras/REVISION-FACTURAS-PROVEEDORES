@@ -89,6 +89,7 @@ function matchProducto(descFactura, descCotizacion) {
 
   return coincidencias >= 2; // mínimo 2 palabras fuertes
 }
+
 /* ================= BUSCAR FACTURAS ================= */
 async function buscarFacturas(){
   const proveedorSel = document.getElementById("proveedor").value;
@@ -170,7 +171,7 @@ function comparar(cotizados, facturados){
   let total=0;
 
   facturados.forEach((f, idx)=>{
-   const c = cotizados.find(x =>
+const c = cotizados.find(x =>
   matchProducto(f.descripcion, x.descripcion)
 );
     const precioCotizado = c ? c.precio : 0;
@@ -191,7 +192,7 @@ const descuento = c && diferencia > 0
     tbody.innerHTML += `
       <tr class="${!c ? 'falta' : (!f.piezasCaja ? 'falta' : '')}">
         <td>${f.descripcion}</td>
-        <td>${c.precio.toFixed(2)}</td>
+        <td>${c ? c.precio.toFixed(2) : "—"}</td>
         <td>${precioUnitFact.toFixed(2)}</td>
         <td>
           <input type="number" min="1" value="${pzas}"
