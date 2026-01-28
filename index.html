@@ -85,30 +85,37 @@ function limpiarNumero(v){
   const n = parseFloat(s);
   return isNaN(n) ? 0 : n;
 }
+function pickNum(obj, keys){
+  for(const k of keys){
+    if(obj && obj[k] !== undefined && obj[k] !== null && obj[k] !== "") return limpiarNumero(obj[k]);
+  }
+  return 0;
+}
+
 function precioCajaConImpuestos(c){
-  // cantidad de cajas (en la tabla "Cant")
-  const cajas = limpiarNumero(c.cantidad ?? c.cant ?? c.Cant ?? c.CANT);
+  // Cantidad de cajas (en tu tabla "Cant")
+  const cajas = pickNum(c, ["cantidad","cant","Cant","CANT","cajas","Cajas","CAJAS"]);
+  const cajasSeguras = cajas > 0 ? cajas : 1;
 
-  // subtotal/importe de la línea (ya viene multiplicado por cantidad)
-  const subtotalLinea = limpiarNumero(
-    c.subtotal ?? c.Subtotal ?? c.importe ?? c.Importe ?? c.IMPORTE
-  );
+  // Subtotal de la línea (columna "Subtotal")
+  let subtotalLinea = pickNum(c, ["subtotal","Subtotal","SUBTOTAL","importe","Importe","IMPORTE","importe_concepto","importeConcepto"]);
 
-  // IVA e IEPS de la línea (si vienen directos)
-  let iva  = limpiarNumero(c.iva  ?? c.IVA  ?? c.importe_iva  ?? c.iva_importe);
-  let ieps = limpiarNumero(c.ieps ?? c.IEPS ?? c.importe_ieps ?? c.ieps_importe);
+  // IVA e IEPS (columna "IVA" y "IEPS")
+  const iva  = pickNum(c, ["iva","IVA","importe_iva","iva_importe","Iva"]);
+  const ieps = pickNum(c, ["ieps","IEPS","importe_ieps","ieps_importe","Ieps"]);
 
-  // Si en tu JSON vienen impuestos anidados (CFDI/supabase a veces lo trae así)
-  // ejemplo: c.impuestos.traslados = [{ impuesto:"002", importe: 10.5 }, { impuesto:"003", importe: 2.1 }]
-  if ((!iva && !ieps) && c.impuestos && Array.isArray(c.impuestos.traslados)) {
-    for (const t of c.impuestos.traslados) {
-      const imp = String(t.impuesto ?? t.Impuesto ?? "").trim();
-      const impImporte = limpiarNumero(t.importe ?? t.Importe ?? t.importeImpuesto);
-      if (imp === "002") iva += impImporte;   // IVA
-      if (imp === "003") ieps += impImporte;  // IEPS
-    }
+  // Si no viene subtotal, lo calculamos con unitario * cajas
+  if (!subtotalLinea || subtotalLinea <= 0){
+    const unit = pickNum(c, ["valorUnitario","unitario","Unitario","UNITARIO","precioUnitario","PrecioUnitario"]);
+    subtotalLinea = unit * cajasSeguras;
   }
 
+  // Total línea con impuestos (DESCUENTO NO SE TOMA)
+  const totalLinea = subtotalLinea + iva + ieps;
+
+  // Precio por caja con impuestos
+  return totalLinea / cajasSeguras;
+}
   // total de la línea con impuestos (descuento NO se usa)
   let totalLinea = subtotalLinea + iva + ieps;
 
@@ -235,7 +242,7 @@ conceptosFactura = arr.map(c=>({
   tokens: tokensProducto(c.descripcion),
 
   // cantidad cajas
-  cajas: limpiarNumero(c.cantidad ?? c.cant ?? c.Cant ?? c.CANT),
+ cajas: pickNum(c, ["cantidad","cant","Cant","CANT","cajas","Cajas","CAJAS"]),
 
   // ✅ precio por caja con impuestos incluidos (Subtotal + IVA + IEPS)
   // ❌ Descuento NO se toma
