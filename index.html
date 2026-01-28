@@ -116,20 +116,6 @@ function precioCajaConImpuestos(c){
   // Precio por caja con impuestos
   return totalLinea / cajasSeguras;
 }
-  // total de la línea con impuestos (descuento NO se usa)
-  let totalLinea = subtotalLinea + iva + ieps;
-
-  // fallback si NO vino subtotal/iva/ieps:
-  // usa unitario * cajas (unitario es por caja)
-  if (!totalLinea || totalLinea <= 0) {
-    const unit = limpiarNumero(c.unitario ?? c.Unitario ?? c.valorUnitario ?? c.valor_unitario);
-    totalLinea = unit * (cajas || 1);
-  }
-
-  // precio por caja con impuestos
-  return cajas > 0 ? (totalLinea / cajas) : 0;
-}
-
 
 function extraerPiezas(desc){
   const m = String(desc ?? "").match(/(\d+)\s*\/\s*\d+/);
