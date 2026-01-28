@@ -126,8 +126,9 @@ async function procesar(){
     alert("Selecciona factura y cotización");
     return;
   }
-  const cotizados = await leerExcel(excelFile.files[0]);
-  comparar(cotizados, conceptosFactura);
+const cotizados = await leerExcel(excelFile.files[0]);
+window._cotizados = cotizados; // cache
+comparar(cotizados, conceptosFactura);
 }
 
 /* ================= EXCEL ================= */
@@ -158,33 +159,51 @@ function comparar(cotizados, facturados){
   tbody.innerHTML="";
   let total=0;
 
-  facturados.forEach(f=>{
-    const c = cotizados.find(x=>f.descripcion.includes(x.clave));
+  facturados.forEach((f, idx)=>{
+    const c = cotizados.find(x => f.descripcion.includes(x.clave));
     if(!c) return;
 
-    const pzas = f.piezasCaja || 1;
-    const unitFact = f.precioCaja / pzas;
-    const dif = unitFact - c.precio;
-    const desc = dif>0 ? dif * pzas * f.cajas : 0;
-    total += desc;
+   const pzas = f.piezasCaja && f.piezasCaja > 0
+  ? Number(f.piezasCaja)
+  : 1;
+
+    const precioUnitFact = f.precioCaja / pzas;
+    const diferencia = precioUnitFact - c.precio;
+
+    const descuento = diferencia > 0
+      ? diferencia * pzas * f.cajas
+      : 0;
+
+    total += descuento;
 
     tbody.innerHTML += `
       <tr class="${!f.piezasCaja?'falta':''}">
         <td>${f.descripcion}</td>
         <td>${c.precio.toFixed(2)}</td>
-        <td>${unitFact.toFixed(2)}</td>
+        <td>${precioUnitFact.toFixed(2)}</td>
         <td>
-          <input type="number" value="${pzas}" min="1"
-            onchange="f.piezasCaja=this.value; procesar()">
+          <input type="number" min="1" value="${pzas}"
+            onchange="actualizarPiezas(${idx}, this.value)">
         </td>
-        <td>${dif.toFixed(2)}</td>
-        <td>${desc.toFixed(2)}</td>
+        <td>${diferencia.toFixed(2)}</td>
+        <td>${descuento.toFixed(2)}</td>
       </tr>`;
   });
 
   document.getElementById("total").innerText =
     "TOTAL A DESCONTAR: $ " + total.toFixed(2);
 }
+  function actualizarPiezas(idx, valor){
+  const pzas = Math.max(1, parseInt(valor) || 1);
+  conceptosFactura[idx].piezasCaja = pzas;
+  recalcular();
+}
+function recalcular(){
+  const cotizadosCache = window._cotizados;
+  if(!cotizadosCache) return;
+  comparar(cotizadosCache, conceptosFactura);
+}
+
 </script>
 
 </body>
