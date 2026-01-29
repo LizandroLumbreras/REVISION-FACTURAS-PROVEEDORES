@@ -91,7 +91,51 @@ function pickNum(obj, keys){
   }
   return 0;
 }
-function pickPath(obj, 
+function pickPath(obj, path){
+  // path ejemplo: "impuestos.traslados"
+  try{
+    return path.split(".").reduce((a,k)=> (a && a[k] !== undefined ? a[k] : undefined), obj);
+  }catch(e){
+    return undefined;
+  }
+}
+function extraerImpuestoConcepto(c, codigo){
+  const posibles = [
+    pickPath(c, "impuestos.traslados"),
+    pickPath(c, "impuestos.Traslados"),
+    pickPath(c, "Impuestos.Traslados"),
+    c.traslados,
+    c.Traslados
+  ].filter(Boolean);
+
+  const normCode = (v) => {
+    // puede venir 2, "2", "002", "003"
+    let s = String(v ?? "").trim();
+    // quita no-dígitos
+    s = s.replace(/\D/g, "");
+    if (!s) return "";
+    return s.padStart(3, "0"); // "2" -> "002"
+  };
+
+  for (const arr of posibles){
+    if(!Array.isArray(arr)) continue;
+
+    let suma = 0;
+    for (const t of arr){
+      const imp = normCode(t.impuesto ?? t.Impuesto ?? t.idImpuesto ?? t.IdImpuesto);
+      if (imp !== codigo) continue;
+
+      const importe = pickNum(t, ["importe","Importe","IMPORTE","importe_impuesto","ImporteImpuesto","importeImporte"]);
+      suma += importe;
+    }
+    if (suma > 0) return suma;
+  }
+
+  // fallback si vienen planos (como en tu tabla visual “IVA / IEPS”)
+  if (codigo === "002") return pickNum(c, ["iva","IVA","importe_iva","iva_importe","Iva"]);
+  if (codigo === "003") return pickNum(c, ["ieps","IEPS","importe_ieps","ieps_importe","Ieps"]);
+  return 0;
+}
 
 function precioPiezaConImpuestos(c, pzas){
   const { cajas, totalLinea } = totalLineaConImpuestos(c);
@@ -207,13 +251,13 @@ function usarFactura(conceptos){
 conceptosFactura = arr.map(c=>{
   const pzas = extraerPiezas(c.descripcion) || 1;
 
-  const calc = totalLineaConImpuestos(c);
-  const cajas = calc.cajas;
+const calc = totalLineaConImpuestos(c);
+const cajas = calc.cajas;
+const pzas  = extraerPiezas(c.descripcion) || 1;
 
-  // ✅ PRECIO POR PIEZA con impuestos:
-  // (unitario + (IVA+IEPS)/cajas) / pzas
-  const precioCajaConImp = calc.unitario + ((calc.iva + calc.ieps) / cajas);
-  const precioPieza = precioCajaConImp / pzas;
+// (Unitario + (IVA+IEPS)/cajas) / pzas
+const precioCajaConImp = calc.unitario + ((calc.iva + calc.ieps) / cajas);
+const precioPieza = precioCajaConImp / pzas;
 
   console.log("CONCEPTO RAW:", c);
   console.log("CALC:", calc, { precioCajaConImp, precioPieza, pzas });
