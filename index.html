@@ -92,15 +92,15 @@ function pickNum(obj, keys){
   return 0;
 }
 
-function precioCajaConImpuestos(c){
-  // Cantidad de cajas (en tu tabla "Cant")
+function totalLineaConImpuestos(c){
+  // Cantidad de cajas (Cant)
   const cajas = pickNum(c, ["cantidad","cant","Cant","CANT","cajas","Cajas","CAJAS"]);
   const cajasSeguras = cajas > 0 ? cajas : 1;
 
-  // Subtotal de la línea (columna "Subtotal")
+  // Subtotal de la línea (Subtotal)
   let subtotalLinea = pickNum(c, ["subtotal","Subtotal","SUBTOTAL","importe","Importe","IMPORTE","importe_concepto","importeConcepto"]);
 
-  // IVA e IEPS (columna "IVA" y "IEPS")
+  // IVA e IEPS (importes de la línea)
   const iva  = pickNum(c, ["iva","IVA","importe_iva","iva_importe","Iva"]);
   const ieps = pickNum(c, ["ieps","IEPS","importe_ieps","ieps_importe","Ieps"]);
 
@@ -110,11 +110,16 @@ function precioCajaConImpuestos(c){
     subtotalLinea = unit * cajasSeguras;
   }
 
-  // Total línea con impuestos (DESCUENTO NO SE TOMA)
+  // Total de la línea con impuestos (DESCUENTO NO se toma)
   const totalLinea = subtotalLinea + iva + ieps;
 
-  // Precio por caja con impuestos
-  return totalLinea / cajasSeguras;
+  return { cajas: cajasSeguras, totalLinea };
+}
+
+function precioPiezaConImpuestos(c, pzas){
+  const { cajas, totalLinea } = totalLineaConImpuestos(c);
+  const piezas = Math.max(1, parseInt(pzas) || 1);
+  return totalLinea / cajas / piezas; // ✅ precio por pieza con impuestos
 }
 
 function extraerPiezas(desc){
@@ -222,21 +227,23 @@ function usarFactura(conceptos){
   }
   if (!Array.isArray(arr)) arr = [];
 
-conceptosFactura = arr.map(c=>({
-  descripcionRaw: c.descripcion || "",
-  descripcion: normalizar(c.descripcion),
-  tokens: tokensProducto(c.descripcion),
+conceptosFactura = arr.map(c=>{
+  const pzas = extraerPiezas(c.descripcion) || 1;
+  const { cajas, totalLinea } = totalLineaConImpuestos(c);
 
-  // cantidad cajas
- cajas: pickNum(c, ["cantidad","cant","Cant","CANT","cajas","Cajas","CAJAS"]),
+  return {
+    descripcionRaw: c.descripcion || "",
+    descripcion: normalizar(c.descripcion),
+    tokens: tokensProducto(c.descripcion),
 
-  // ✅ precio por caja con impuestos incluidos (Subtotal + IVA + IEPS)
-  // ❌ Descuento NO se toma
-  precioCaja: precioCajaConImpuestos(c),
+    cajas,                // ✅ cajas seguras
+    totalLinea,           // ✅ guardamos total línea con impuestos
+    piezasCaja: pzas,     // ✅ pzas por caja
 
-  piezasCaja: extraerPiezas(c.descripcion)
-}));
-
+    // ✅ AHORA guardamos el precio por PIEZA con impuestos
+    precioPieza: (totalLinea / cajas / pzas)
+  };
+});
 
   procesar();
 }
@@ -345,8 +352,8 @@ function comparar(cotizados, facturados){
     // piezas
     const pzas = (f.piezasCaja && f.piezasCaja > 0) ? Number(f.piezasCaja) : 1;
 
-    // precio unitario factura
-    const precioUnitFact = f.precioCaja / pzas;
+// ✅ la factura YA es por pieza con impuestos
+const precioUnitFact = f.precioPieza;
 
     // buscar mejor match
     let best = null;
@@ -395,9 +402,17 @@ function comparar(cotizados, facturados){
 /* ================= RECALCULO PZAS ================= */
 function actualizarPiezas(idx, valor){
   const pzas = Math.max(1, parseInt(valor) || 1);
+
   conceptosFactura[idx].piezasCaja = pzas;
+
+  // ✅ recalcula precio por pieza con impuestos
+  const cajas = conceptosFactura[idx].cajas || 1;
+  const totalLinea = conceptosFactura[idx].totalLinea || 0;
+  conceptosFactura[idx].precioPieza = totalLinea / cajas / pzas;
+
   comparar(cotizadosCache, conceptosFactura);
 }
+
 </script>
 
 </body>
