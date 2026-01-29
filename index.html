@@ -470,7 +470,11 @@ function comparar(cotizados, facturados){
       }
     }
 
-    const ok = best && (bestHits >= 2 || bestScore >= 0.55);
+    const ok = best && (
+  bestHits >= 2 ||
+  bestScore >= 0.55 ||
+  (bestHits >= 1 && bestScore >= 0.30)
+);
     const precioCot = ok ? best.precio : 0;
 
     // ✅ total piezas inferido
