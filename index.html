@@ -143,9 +143,26 @@ function precioPiezaConImpuestos(c, pzas){
   return totalLinea / cajas / piezas; // ✅ precio por pieza con impuestos
 }
 
-function extraerPiezas(desc){
-  const m = String(desc ?? "").match(/(\d+)\s*\/\s*\d+/);
-  return m ? parseInt(m[1]) : null;
+  function extraerPiezas(desc){
+  const s = String(desc ?? "").toUpperCase();
+
+  // 1) formato promo 12/950
+  let m = s.match(/(\d+)\s*\/\s*\d+/);
+  if (m) return parseInt(m[1], 10);
+
+  // 2) "X 12", "X12"
+  m = s.match(/\bX\s*(\d+)\b/);
+  if (m) return parseInt(m[1], 10);
+
+  // 3) "12 PZ", "12 PZA", "12 PZAS", "12 PIEZAS"
+  m = s.match(/\b(\d+)\s*(PZAS?|PZA|PIEZAS?)\b/);
+  if (m) return parseInt(m[1], 10);
+
+  // 4) "PAQ 12", "PACK 12" (opcional)
+  m = s.match(/\b(PAQ|PAQUETE|PACK)\s*(\d+)\b/);
+  if (m) return parseInt(m[2], 10);
+
+  return null;
 }
 
 /* ---- tokens fuertes para matching ---- */
@@ -237,21 +254,38 @@ async function buscarFacturas(){
   });
   html += "</ul>";
   document.getElementById("listaFacturas").innerHTML = html;
-}
-function totalLineaConImpuestos(c){
-  const cajas = pickNum(c, ["cantidad","cant","Cant","CANT","cajas","Cajas","CAJAS"]) || 1;
-  const unitario = pickNum(c, ["valorUnitario","unitario","Unitario","UNITARIO","precioUnitario","PrecioUnitario"]);
+}function totalLineaConImpuestos(c){
+  const cantidad = pickNum(c, [
+    "cantidad","Cantidad","cant","Cant","CANT",
+    "cajas","Cajas","CAJAS",
+    "qty","Qty","QTY"
+  ]);
 
-  let subtotalLinea = pickNum(c, ["subtotal","Subtotal","importe","Importe"]);
+  const cantSegura = (cantidad && cantidad > 0) ? cantidad : 1;
+
+  const unitario = pickNum(c, [
+    "valorUnitario","ValorUnitario","valor_unitario",
+    "unitario","Unitario","UNITARIO",
+    "precioUnitario","PrecioUnitario",
+    "precio","Precio","PRICE","price"
+  ]);
+
+  let subtotalLinea = pickNum(c, [
+    "subtotal","Subtotal","SUBTOTAL",
+    "importe","Importe","IMPORTE",
+    "base","Base"
+  ]);
+
+  // si no viene subtotal, lo calculo
   if (!subtotalLinea || subtotalLinea <= 0){
-    subtotalLinea = unitario * cajas;
+    subtotalLinea = unitario * cantSegura;
   }
 
   const iva  = extraerImpuestoConcepto(c, "002");
   const ieps = extraerImpuestoConcepto(c, "003");
 
   return {
-    cajas,
+    cantidad: cantSegura,
     unitario,
     subtotalLinea,
     iva,
@@ -270,35 +304,57 @@ function usarFactura(conceptos){
   if (!Array.isArray(arr)) arr = [];
 
 conceptosFactura = arr.map(c=>{
-  const pzas = extraerPiezas(c.descripcion) || 1;
-
+  const pzasCaja = extraerPiezas(c.descripcion) || 1;
   const calc = totalLineaConImpuestos(c);
-  const cajas = calc.cajas;
-
-  // (Unitario + (IVA+IEPS)/cajas) / pzas
-  const precioCajaConImp = calc.unitario + ((calc.iva + calc.ieps) / cajas);
-  const precioPieza = precioCajaConImp / pzas;
 
   return {
     descripcionRaw: c.descripcion || "",
     descripcion: normalizar(c.descripcion),
     tokens: tokensProducto(c.descripcion),
 
-    cajas,
-    piezasCaja: pzas,
+    cantidad: calc.cantidad || 0,   // ← Cant real (puede ser cajas o piezas)
+    piezasCaja: pzasCaja,           // ← pzas por caja (si aplica)
 
     unitario: calc.unitario,
     ivaLinea: calc.iva,
     iepsLinea: calc.ieps,
 
     subtotalLinea: calc.subtotalLinea,
-    totalLinea: calc.totalLinea,
-
-    precioPieza
+    totalLinea: calc.totalLinea
   };
 });
 
   procesar();
+}
+  function medidaPrincipal(tokens){
+  // busca tokens tipo 64GR / 1KG / 950ML / 2L
+  return tokens.find(t => /^\d+(\.\d+)?(ML|GR|G|KG|L)$/.test(t)) || null;
+}
+  
+function inferirTotalPiezas(item, precioCot){
+  const cant = item.cantidad > 0 ? item.cantidad : 1;
+  const pzasCaja = item.piezasCaja > 0 ? item.piezasCaja : 1;
+
+  // Si no hay cotizado, fallback simple
+  if (!precioCot || precioCot <= 0){
+    return (pzasCaja > 1) ? (cant * pzasCaja) : cant;
+  }
+
+  const unit = item.unitario || 0;
+
+  // Heurística:
+  // - si unitario ~ cotizado => Cant son piezas
+  // - si unitario ~ cotizado*pzasCaja => Cant son cajas
+  const rPieza = unit / precioCot;
+  const rCaja  = unit / (precioCot * pzasCaja);
+
+  const cerca = (r) => (r >= 0.60 && r <= 1.60);
+
+  if (cerca(rPieza)) return cant;              // Cant = piezas
+  if (cerca(rCaja))  return cant * pzasCaja;  // Cant = cajas
+
+  // fallback: si pzasCaja > 1 asumimos cajas
+  return (pzasCaja > 1) ? (cant * pzasCaja) : cant;
 }
 
 /* ================= PROCESAR ================= */
@@ -398,49 +454,48 @@ function leerExcel(file, proveedorSel){
 /* ================= COMPARAR (MATCH POR SCORE) ================= */
 function comparar(cotizados, facturados){
   const tbody = document.getElementById("tabla");
-  tbody.innerHTML="";
-  let total=0;
+  tbody.innerHTML = "";
+  let total = 0;
 
-  facturados.forEach((f, idx)=>{
-    // piezas
-    const pzas = (f.piezasCaja && f.piezasCaja > 0) ? Number(f.piezasCaja) : 1;
-
-// ✅ la factura YA es por pieza con impuestos
-const precioUnitFact = f.precioPieza;
+  facturados.forEach((f, idx) => {
+    const pzasCaja = (f.piezasCaja && f.piezasCaja > 0) ? Number(f.piezasCaja) : 1;
 
     // buscar mejor match
-    let best = null;
-    let bestScore = 0;
-    let bestHits = 0;
+    let best = null, bestScore = 0, bestHits = 0;
 
     for (const x of cotizados){
-      const {score, hits} = scoreMatch(f.tokens, x.tokens);
+      const { score, hits } = scoreMatch(f.tokens, x.tokens);
       if (score > bestScore || (score === bestScore && hits > bestHits)){
-        bestScore = score;
-        bestHits = hits;
-        best = x;
+        bestScore = score; bestHits = hits; best = x;
       }
     }
 
-    // umbral: 2 hits o score >= 0.55
     const ok = best && (bestHits >= 2 || bestScore >= 0.55);
-
     const precioCot = ok ? best.precio : 0;
+
+    // ✅ total piezas inferido
+    const totalPiezas = inferirTotalPiezas(f, precioCot);
+
+    // ✅ precio real por pieza (con impuestos) desde totalLinea
+    const precioUnitFact = (f.totalLinea > 0 && totalPiezas > 0)
+      ? (f.totalLinea / totalPiezas)
+      : 0;
+
     const diferencia = ok ? (precioUnitFact - precioCot) : 0;
 
     const descuento = (ok && diferencia > 0)
-      ? diferencia * pzas * f.cajas
+      ? (diferencia * totalPiezas)
       : 0;
 
     total += descuento;
 
     tbody.innerHTML += `
-      <tr class="${!ok ? 'falta' : (!f.piezasCaja ? 'falta' : '')}">
+      <tr class="${!ok ? 'falta' : ''}">
         <td>${f.descripcion}</td>
         <td>${ok ? precioCot.toFixed(2) : "—"}</td>
         <td>${precioUnitFact.toFixed(2)}</td>
         <td>
-          <input type="number" min="1" value="${pzas}"
+          <input type="number" min="1" value="${pzasCaja}"
             onchange="actualizarPiezas(${idx}, this.value)">
         </td>
         <td>${diferencia.toFixed(2)}</td>
@@ -455,18 +510,7 @@ const precioUnitFact = f.precioPieza;
 /* ================= RECALCULO PZAS ================= */
 function actualizarPiezas(idx, valor){
   const pzas = Math.max(1, parseInt(valor) || 1);
-
-  const item = conceptosFactura[idx];
-  item.piezasCaja = pzas;
-
-  const cajas = item.cajas || 1;
-  const unitario = item.unitario || 0;
-  const iva = item.ivaLinea || 0;
-  const ieps = item.iepsLinea || 0;
-
-  const precioCajaConImp = unitario + ((iva + ieps) / cajas);
-  item.precioPieza = precioCajaConImp / pzas;
-
+  conceptosFactura[idx].piezasCaja = pzas;
   comparar(cotizadosCache, conceptosFactura);
 }
 </script>
