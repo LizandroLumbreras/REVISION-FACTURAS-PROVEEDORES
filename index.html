@@ -93,25 +93,27 @@ function pickNum(obj, keys){
 }
 
 function totalLineaConImpuestos(c){
-  // Cantidad de cajas (Cant)
+  // Cantidad (cajas)
   const cajas = pickNum(c, ["cantidad","cant","Cant","CANT","cajas","Cajas","CAJAS"]);
   const cajasSeguras = cajas > 0 ? cajas : 1;
 
-  // Subtotal de la línea (Subtotal)
-  let subtotalLinea = pickNum(c, ["subtotal","Subtotal","SUBTOTAL","importe","Importe","IMPORTE","importe_concepto","importeConcepto"]);
+  // Unitario (precio por caja SIN impuestos)
+  const unit = pickNum(c, ["valorUnitario","unitario","Unitario","UNITARIO","precioUnitario","PrecioUnitario"]);
 
-  // IVA e IEPS (importes de la línea)
+  // Base sin descuento (NO usamos subtotal/importe para evitar descuentos)
+  let base = unit > 0 ? (unit * cajasSeguras) : 0;
+
+  // Fallback solo si no vino unitario (muy raro)
+  if (base <= 0){
+    base = pickNum(c, ["importe","Importe","IMPORTE","subtotal","Subtotal","SUBTOTAL","importe_concepto","importeConcepto"]);
+  }
+
+  // IVA e IEPS (IMPORTES de la línea)
   const iva  = pickNum(c, ["iva","IVA","importe_iva","iva_importe","Iva"]);
   const ieps = pickNum(c, ["ieps","IEPS","importe_ieps","ieps_importe","Ieps"]);
 
-  // Si no viene subtotal, lo calculamos con unitario * cajas
-  if (!subtotalLinea || subtotalLinea <= 0){
-    const unit = pickNum(c, ["valorUnitario","unitario","Unitario","UNITARIO","precioUnitario","PrecioUnitario"]);
-    subtotalLinea = unit * cajasSeguras;
-  }
-
-  // Total de la línea con impuestos (DESCUENTO NO se toma)
-  const totalLinea = subtotalLinea + iva + ieps;
+  // Total de la línea con impuestos (descuento NO se usa)
+  const totalLinea = base + iva + ieps;
 
   return { cajas: cajasSeguras, totalLinea };
 }
