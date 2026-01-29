@@ -238,6 +238,27 @@ async function buscarFacturas(){
   html += "</ul>";
   document.getElementById("listaFacturas").innerHTML = html;
 }
+function totalLineaConImpuestos(c){
+  const cajas = pickNum(c, ["cantidad","cant","Cant","CANT","cajas","Cajas","CAJAS"]) || 1;
+  const unitario = pickNum(c, ["valorUnitario","unitario","Unitario","UNITARIO","precioUnitario","PrecioUnitario"]);
+
+  let subtotalLinea = pickNum(c, ["subtotal","Subtotal","importe","Importe"]);
+  if (!subtotalLinea || subtotalLinea <= 0){
+    subtotalLinea = unitario * cajas;
+  }
+
+  const iva  = extraerImpuestoConcepto(c, "002");
+  const ieps = extraerImpuestoConcepto(c, "003");
+
+  return {
+    cajas,
+    unitario,
+    subtotalLinea,
+    iva,
+    ieps,
+    totalLinea: subtotalLinea + iva + ieps
+  };
+}
 
 /* ================= USAR FACTURA ================= */
 function usarFactura(conceptos){
@@ -251,16 +272,12 @@ function usarFactura(conceptos){
 conceptosFactura = arr.map(c=>{
   const pzas = extraerPiezas(c.descripcion) || 1;
 
-const calc = totalLineaConImpuestos(c);
-const cajas = calc.cajas;
-const pzas  = extraerPiezas(c.descripcion) || 1;
+  const calc = totalLineaConImpuestos(c);
+  const cajas = calc.cajas;
 
-// (Unitario + (IVA+IEPS)/cajas) / pzas
-const precioCajaConImp = calc.unitario + ((calc.iva + calc.ieps) / cajas);
-const precioPieza = precioCajaConImp / pzas;
-
-  console.log("CONCEPTO RAW:", c);
-  console.log("CALC:", calc, { precioCajaConImp, precioPieza, pzas });
+  // (Unitario + (IVA+IEPS)/cajas) / pzas
+  const precioCajaConImp = calc.unitario + ((calc.iva + calc.ieps) / cajas);
+  const precioPieza = precioCajaConImp / pzas;
 
   return {
     descripcionRaw: c.descripcion || "",
@@ -274,14 +291,13 @@ const precioPieza = precioCajaConImp / pzas;
     ivaLinea: calc.iva,
     iepsLinea: calc.ieps,
 
-    // por si quieres auditar
     subtotalLinea: calc.subtotalLinea,
     totalLinea: calc.totalLinea,
 
-    // ✅ lo que usas en la tabla
     precioPieza
   };
 });
+
   procesar();
 }
 
