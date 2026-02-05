@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <title>Comparador Cotización vs Factura (BD)</title>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.7/dist/umd/supabase.min.js"></script>
 
@@ -56,7 +57,7 @@ tr.falta{background:#fff6c2}
 </table>
 
 <div class="total" id="total"></div>
-
+<button onclick="guardarDescuento()">💾 Guardar descuento</button>
 <script>
 /* ================= SUPABASE ================= */
 const supa = supabase.createClient(
@@ -66,6 +67,8 @@ const supa = supabase.createClient(
 
 let conceptosFactura = [];
 let cotizadosCache = [];
+let facturaActualUUID = null;
+
 
 /* ================= UTILIDADES ================= */
 function normalizar(t){
@@ -249,7 +252,7 @@ async function buscarFacturas(){
     html += `
       <li>
         ${String(f.fecha).split("T")[0]} — $${f.total}
-        <button onclick='usarFactura(${JSON.stringify(f.conceptos_detalle)})'>Usar</button>
+       <button onclick='usarFactura(${JSON.stringify(f.conceptos_detalle)}, "${f.uuid_cfdi}")'>Usar</button>
       </li>`;
   });
   html += "</ul>";
@@ -295,7 +298,8 @@ async function buscarFacturas(){
 }
 
 /* ================= USAR FACTURA ================= */
-function usarFactura(conceptos){
+function usarFactura(conceptos, uuid){
+  facturaActualUUID = uuid;
   // conceptos_detalle puede venir como array o como string JSON
   let arr = conceptos;
   if (typeof arr === "string") {
@@ -476,6 +480,7 @@ function comparar(cotizados, facturados){
   (bestHits >= 1 && bestScore >= 0.30)
 );
     const precioCot = ok ? best.precio : 0;
+    f.precioCot = precioCot;
 
     // ✅ total piezas inferido
     const totalPiezas = inferirTotalPiezas(f, precioCot);
@@ -516,6 +521,101 @@ function actualizarPiezas(idx, valor){
   const pzas = Math.max(1, parseInt(valor) || 1);
   conceptosFactura[idx].piezasCaja = pzas;
   comparar(cotizadosCache, conceptosFactura);
+}
+async function generarPDFDescuento(uuid) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+
+  doc.setFontSize(14);
+  doc.text("DESCUENTO APLICADO A FACTURA", 14, 20);
+
+  doc.setFontSize(10);
+  doc.text(`UUID CFDI: ${uuid}`, 14, 30);
+  doc.text(`Fecha: ${new Date().toLocaleDateString()}`, 14, 36);
+
+  let y = 50;
+  doc.setFontSize(9);
+
+  doc.text("Producto", 14, y);
+  doc.text("Cotizado", 110, y);
+  doc.text("Factura", 135, y);
+  doc.text("Descuento", 165, y);
+  y += 6;
+
+  let total = 0;
+
+  conceptosFactura.forEach(f => {
+    const precioCot = f.precioCot || 0;
+    const totalPzas = inferirTotalPiezas(f, precioCot);
+    const precioFact = f.totalLinea / totalPzas;
+    const diff = precioFact - precioCot;
+    const desc = diff > 0 ? diff * totalPzas : 0;
+
+    if (desc <= 0) return;
+
+    total += desc;
+
+    doc.text(f.descripcion.substring(0, 45), 14, y);
+    doc.text(precioCot.toFixed(2), 110, y);
+    doc.text(precioFact.toFixed(2), 135, y);
+    doc.text(desc.toFixed(2), 165, y);
+
+    y += 6;
+    if (y > 270) {
+      doc.addPage();
+      y = 20;
+    }
+  });
+
+  doc.setFontSize(12);
+  doc.text(`TOTAL A DESCONTAR: $${total.toFixed(2)}`, 14, y + 10);
+
+  return { doc, total };
+}
+  async function subirPDFSupabase(doc, uuid) {
+  const blob = doc.output("blob");
+  const nombre = `descuento_${uuid}.pdf`;
+
+  const { error } = await supa.storage
+    .from("descuentos")
+    .upload(nombre, blob, {
+      contentType: "application/pdf",
+      upsert: true
+    });
+
+  if (error) throw error;
+
+  const { data } = supa.storage
+    .from("descuentos")
+    .getPublicUrl(nombre);
+
+  return data.publicUrl;
+}
+async function guardarURLDescuento(uuid, url) {
+  const { error } = await supa
+    .from("deuda_limpia_pdd")
+    .update({ descuentos: url })
+    .eq("uuid_cfdi", uuid);
+
+  if (error) throw error;
+}
+async function guardarDescuento() {
+  try {
+    const uuid = facturaActualUUID;
+    if (!uuid) {
+      alert("No se detectó UUID de la factura");
+      return;
+    }
+
+    const { doc } = await generarPDFDescuento(uuid);
+    const url = await subirPDFSupabase(doc, uuid);
+    await guardarURLDescuento(uuid, url);
+
+    alert("✅ Descuento guardado correctamente");
+  } catch (e) {
+    console.error(e);
+    alert("❌ Error al guardar descuento");
+  }
 }
 </script>
 
