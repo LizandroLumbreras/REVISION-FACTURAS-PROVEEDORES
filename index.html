@@ -574,7 +574,8 @@ async function generarPDFDescuento(uuid) {
 }
   async function subirPDFSupabase(doc, uuid) {
   const blob = doc.output("blob");
-  const nombre = `descuento_${uuid}.pdf`;
+  const safeUUID = uuid.replace(/[^a-zA-Z0-9_-]/g, "");
+  const nombre = `descuento_${safeUUID}.pdf`;
 
   const { error } = await supa.storage
     .from("descuentos")
