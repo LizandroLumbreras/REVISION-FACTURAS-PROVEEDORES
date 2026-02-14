@@ -181,9 +181,15 @@ function tokenNorm(tok){
 
   // Normaliza litros
   tok = tok.replace(/LT$/,"L");
+  tok = tok.replace(/^(\d+(?:\.\d+)?)K$/,"$1KG");
 
-  // Token de medida: 950ML, 177GR, 1KG, 2L, etc.
-  if (/^\d+(?:\.\d+)?(ML|GR|G|KG|L)$/.test(tok)) return tok;
+ // Normaliza unidades raras
+tok = tok.replace(/GRM$/,"GR");
+tok = tok.replace(/GRS$/,"GR");
+tok = tok.replace(/LT$/,"L");
+
+// Token de medida
+if (/^\d+(?:\.\d+)?(ML|GR|G|KG|L)$/.test(tok)) return tok;
 
   // singular básico (GALLETAS->GALLETA)
   if (tok.length >= 5 && tok.endsWith("S")) tok = tok.slice(0, -1);
@@ -195,20 +201,29 @@ function tokenNorm(tok){
 
 function tokensProducto(texto){
   let s = normalizar(texto);
+  // Separar marcas compuestas conocidas
+s = s.replace(/ITALPASTA/g, "ITAL PASTA");
+s = s.replace(/LACOSTENA/g, "LA COSTENA");
+
 
   // Convierte promos tipo "12/950 ML" -> "950ML" (nos interesa el tamaño real)
   s = s.replace(/(\d+)\s*\/\s*(\d+)\s*(ML|GR|G|KG|LT|L)\b/g, "$2$3");
 
   // Extrae medidas aunque vengan separadas "950 ML" o juntas "950ML"
   const medidas = [];
-  s.replace(/(\d+(?:\.\d+)?)\s*(ML|GR|G|KG|LT|L)\b/g, (_, num, uni) => {
-    uni = uni.replace("LT","L");
+  s.replace(/(\d+(?:\.\d+)?)\s*(ML|GR|GRM|GRS|G|KG|K|LT|L)\b/g, (_, num, uni) => {
+uni = uni.replace("LT","L")
+         .replace("GRM","GR")
+         .replace("GRS","GR")
+         .replace(/^K$/,"KG");
+
+
     medidas.push(tokenNorm(`${num}${uni}`));
     return _;
   });
 
   // Quita las medidas del texto base para no duplicar
-  s = s.replace(/(\d+(?:\.\d+)?)\s*(ML|GR|G|KG|LT|L)\b/g, " ");
+  s = s.replace(/(\d+(?:\.\d+)?)\s*(ML|GR|GRM|GRS|G|KG|K|LT|L)\b/g,  " ");
 
   // Quita números sueltos que no sean medidas (ej: "12" de promo)
   s = s.replace(/\b\d+\b/g, " ");
@@ -467,18 +482,65 @@ function comparar(cotizados, facturados){
     // buscar mejor match
     let best = null, bestScore = 0, bestHits = 0;
 
-    for (const x of cotizados){
-      const { score, hits } = scoreMatch(f.tokens, x.tokens);
-      if (score > bestScore || (score === bestScore && hits > bestHits)){
-        bestScore = score; bestHits = hits; best = x;
-      }
-    }
+ for (const x of cotizados){
 
-    const ok = best && (
-  bestHits >= 2 ||
-  bestScore >= 0.55 ||
-  (bestHits >= 1 && bestScore >= 0.30)
-);
+  const medidaF = medidaPrincipal(f.tokens);
+  const medidaX = medidaPrincipal(x.tokens);
+
+const esItalpasta =
+  normalizar(f.descripcionRaw).includes("ITALPASTA") &&
+  normalizar(x.descripcionRaw).includes("ITALPASTA");
+
+// Si el facturado tiene medida
+if (medidaF) {
+
+  // 🔥 PERMITIR excepción ITALPASTA aunque no tenga medida
+  if (!medidaX && !esItalpasta) continue;
+
+  if (medidaX && medidaF !== medidaX) continue;
+}
+
+
+  const { score, hits } = scoreMatch(f.tokens, x.tokens);
+
+  if (score > bestScore || (score === bestScore && hits > bestHits)){
+    bestScore = score;
+    bestHits = hits;
+    best = x;
+  }
+}
+
+
+let ok = false;
+
+if (best) {
+
+  const medidaF = medidaPrincipal(f.tokens);
+  const medidaX = medidaPrincipal(best.tokens);
+  const medidaCoincide = medidaF && medidaX && medidaF === medidaX;
+
+const esItalpastaFactura =
+  normalizar(f.descripcionRaw).includes("ITALPASTA");
+
+const esItalpastaCot =
+  normalizar(best.descripcionRaw).includes("ITALPASTA");
+
+  // 🔥 EXCEPCIÓN SOLO PARA FIDEO ITALPASTA
+  if (esItalpastaFactura && esItalpastaCot && bestHits >= 2) {
+    ok = true;
+  }
+  else if (medidaCoincide && bestHits >= 2) {
+    ok = true;
+  }
+  else if (bestHits >= 3) {
+    ok = true;
+  }
+  else if (bestScore >= 0.55) {
+    ok = true;
+  }
+}
+
+
     const precioCot = ok ? best.precio : 0;
     f.precioCot = precioCot;
 
