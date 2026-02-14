@@ -8,23 +8,154 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.7/dist/umd/supabase.min.js"></script>
 
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+
+
 <style>
-body{font-family:Arial;background:#f4f6f9;padding:20px}
-select,button,input{padding:8px;margin:4px}
-button{background:#00416A;color:#fff;border:none;cursor:pointer}
-table{width:100%;border-collapse:collapse;margin-top:20px;background:#fff}
-th,td{border:1px solid #ccc;padding:6px;text-align:center}
-th{background:#00416A;color:#fff}
-.total{margin-top:15px;font-size:18px;font-weight:bold;color:#b00020}
-input[type=number]{width:70px}
-tr.falta{background:#fff6c2}
+:root{
+  --azul1:#00416A;
+  --azul2:#0c6cbd;
+  --gris:#f4f6f9;
+  --card:#ffffff;
+  --radius:14px;
+  --shadow:0 8px 24px rgba(0,0,0,.18);
+}
+
+*{
+  box-sizing:border-box;
+  font-family:'Poppins', Arial, sans-serif;
+}
+
+body{
+  margin:0;
+  background:linear-gradient(135deg,var(--azul1),var(--azul2));
+  padding:30px;
+}
+
+.container{
+  background:var(--card);
+  max-width:1200px;
+  margin:auto;
+  padding:30px;
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+}
+
+h2{
+  margin-top:0;
+  color:var(--azul1);
+  font-weight:600;
+}
+
+label{
+  font-weight:600;
+  color:#333;
+}
+
+select,input[type="file"]{
+  padding:10px;
+  border-radius:8px;
+  border:1px solid #ccc;
+  margin-right:10px;
+}
+
+button{
+  padding:10px 18px;
+  border-radius:10px;
+  border:none;
+  cursor:pointer;
+  font-weight:600;
+  transition:0.2s ease;
+}
+
+button:hover{
+  transform:translateY(-2px);
+  opacity:.9;
+}
+
+button.primary{
+  background:var(--azul1);
+  color:white;
+}
+
+button.success{
+  background:#0c6cbd;
+  color:white;
+}
+
+table{
+  width:100%;
+  border-collapse:collapse;
+  margin-top:20px;
+  background:white;
+  border-radius:10px;
+  overflow:hidden;
+}
+
+th{
+  background:var(--azul1);
+  color:white;
+  padding:12px;
+  font-size:14px;
+}
+tbody tr:last-child td{
+  border-bottom:none;
+}
+
+td{
+  padding:10px;
+  border-bottom:1px solid #eee;
+  font-size:13px;
+}
+
+tr:hover{
+  background:#f1f5f9;
+}
+
+tr.falta{
+  background:#fff4cc;
+}
+
+.total{
+  margin-top:20px;
+  padding:15px;
+  background:#fff3f3;
+  border-left:6px solid #b00020;
+  border-radius:8px;
+  font-size:20px;
+  font-weight:bold;
+  color:#b00020;
+}
+
+
+#listaFacturas{
+  background:#f4f6f9;
+  padding:15px;
+  border-radius:10px;
+  margin-top:15px;
+}
+
+#listaFacturas button{
+  background:var(--azul2);
+  color:white;
+  margin-left:10px;
+}
+
+#btnGuardar{
+  margin-top:20px;
+  background:#28a745;
+  color:white;
+  font-size:16px;
+}
 </style>
+
 </head>
 
 <body>
-
+<div class="container">
 <h2>📊 Comparador Cotización vs Factura (BD)</h2>
 
+<div style="margin-bottom:20px;">
 <label>Proveedor:</label>
 <select id="proveedor">
   <option value="">-- Selecciona --</option>
@@ -33,7 +164,8 @@ tr.falta{background:#fff6c2}
   <option value="MAS BODEGA">MAS BODEGA</option>
 </select>
 
-<button onclick="buscarFacturas()">Buscar facturas</button>
+<button onclick="buscarFacturas()" class="primary">Buscar facturas</button>
+</div>
 
 <div id="listaFacturas"></div>
 
@@ -57,7 +189,10 @@ tr.falta{background:#fff6c2}
 </table>
 
 <div class="total" id="total"></div>
-<button id="btnGuardar" onclick="guardarDescuento()">💾 Guardar descuento</button>
+<button id="btnGuardar" class="success" onclick="guardarDescuento()">
+  💾 Guardar descuento
+</button>
+</div>  
 <script>
 /* ================= SUPABASE ================= */
 const supa = supabase.createClient(
@@ -481,26 +616,95 @@ function comparar(cotizados, facturados){
 
     // buscar mejor match
     let best = null, bestScore = 0, bestHits = 0;
+let matchForzado = false;
 
- for (const x of cotizados){
+for (const x of cotizados){
+  // 🔥 MATCH DIRIGIDO ESPECÍFICO
+const descF = normalizar(f.descripcionRaw);
+const descX = normalizar(x.descripcionRaw);
+
+// 1️⃣ YEMINA CODO
+if (
+  descF.includes("YEMINA") &&
+  descF.includes("CODO") &&
+  descF.includes("LISO") &&
+  descX.includes("YEMINA") &&
+  descX.includes("CODO")
+) {
+  best = x;
+  bestScore = 1;
+  bestHits = 99;
+  matchForzado = true;
+  continue;
+}
+
+
+// 2️⃣ YEMINA FIDEO MEDIANO
+if (
+  descF.includes("YEMINA") &&
+  descF.includes("FIDEO") &&
+  descF.includes("MEDIANO") &&
+  descX.includes("YEMINA") &&
+  descX.includes("FIDEO")
+) {
+  best = x;
+  bestScore = 1;
+  bestHits = 99;
+  matchForzado = true;
+  continue;
+}
+
+
+// 3️⃣ HARINA SELECTA
+if (descF.includes("HARINA") && descF.includes("SELECTA") &&
+    descX.includes("SELECTA")) {
+  best = x;
+  bestScore = 1;
+  bestHits = 99;
+  matchForzado = true;
+  continue;
+}
+
+// 4️⃣ MASECA TAMAL
+if (descF.includes("MASECA") && descF.includes("TAMAL") &&
+    descX.includes("MASECA") && descX.includes("TAMAL")) {
+  best = x;
+  bestScore = 1;
+  bestHits = 99;
+  matchForzado = true;
+  continue;
+}
 
   const medidaF = medidaPrincipal(f.tokens);
   const medidaX = medidaPrincipal(x.tokens);
 
-const esItalpasta =
-  normalizar(f.descripcionRaw).includes("ITALPASTA") &&
-  normalizar(x.descripcionRaw).includes("ITALPASTA");
+  const esItalpasta =
+    normalizar(f.descripcionRaw).includes("ITALPASTA") &&
+    normalizar(x.descripcionRaw).includes("ITALPASTA");
 
-// Si el facturado tiene medida
-if (medidaF) {
+  if (medidaF) {
+    if (!medidaX && !esItalpasta) continue;
+    if (medidaX && medidaF !== medidaX) continue;
+  }
 
-  // 🔥 PERMITIR excepción ITALPASTA aunque no tenga medida
-  if (!medidaX && !esItalpasta) continue;
+  // 🔥 EXCEPCIÓN MARCA FUERTE
+  const marcasFuertes = ["YEMINA","MASECA","SELECTA"];
 
-  if (medidaX && medidaF !== medidaX) continue;
-}
+  const coincideMarca = marcasFuertes.some(m =>
+    f.tokens.includes(m) && x.tokens.includes(m)
+  );
 
+  if (coincideMarca) {
+    const { score, hits } = scoreMatch(f.tokens, x.tokens);
+    if (hits >= 2) {
+      bestScore = score;
+      bestHits = hits;
+      best = x;
+      continue;
+    }
+  }
 
+  // 🔎 MATCH NORMAL
   const { score, hits } = scoreMatch(f.tokens, x.tokens);
 
   if (score > bestScore || (score === bestScore && hits > bestHits)){
@@ -515,28 +719,20 @@ let ok = false;
 
 if (best) {
 
-  const medidaF = medidaPrincipal(f.tokens);
-  const medidaX = medidaPrincipal(best.tokens);
-  const medidaCoincide = medidaF && medidaX && medidaF === medidaX;
+  if (matchForzado) {
+    ok = true;
+  } else {
 
-const esItalpastaFactura =
-  normalizar(f.descripcionRaw).includes("ITALPASTA");
+    const medidaF = medidaPrincipal(f.tokens);
+    const medidaX = medidaPrincipal(best.tokens);
+    const medidaCoincide = medidaF && medidaX && medidaF === medidaX;
 
-const esItalpastaCot =
-  normalizar(best.descripcionRaw).includes("ITALPASTA");
-
-  // 🔥 EXCEPCIÓN SOLO PARA FIDEO ITALPASTA
-  if (esItalpastaFactura && esItalpastaCot && bestHits >= 2) {
-    ok = true;
-  }
-  else if (medidaCoincide && bestHits >= 2) {
-    ok = true;
-  }
-  else if (bestHits >= 3) {
-    ok = true;
-  }
-  else if (bestScore >= 0.55) {
-    ok = true;
+    if (medidaCoincide && bestHits >= 2) {
+      ok = true;
+    }
+    else if (bestHits >= 2 && bestScore >= 0.40) {
+      ok = true;
+    }
   }
 }
 
@@ -663,10 +859,6 @@ async function guardarURLDescuento(uuid, url) {
   if (error) throw error;
 }
 async function guardarDescuento() {
-  const btn = document.getElementById("btnGuardar");
-  btn.disabled = true;
-  btn.innerText = "Guardando...";
-
   try {
     const uuid = facturaActualUUID;
 
@@ -675,6 +867,7 @@ async function guardarDescuento() {
       return;
     }
 
+    // 🔍 1. Verificar si ya tiene descuento
     const { data, error } = await supa
       .from("deuda_limpia_pdd")
       .select("descuentos")
@@ -684,26 +877,27 @@ async function guardarDescuento() {
     if (error) throw error;
 
     if (data && data.descuentos) {
-      alert("⚠️ Esta factura ya tiene un descuento registrado.");
+      alert("⚠️ Esta factura ya tiene un descuento registrado.\nNo se puede duplicar.");
       return;
     }
 
+    // 📄 2. Generar PDF
     const { doc } = await generarPDFDescuento(uuid);
+
+    // ☁️ 3. Subir PDF
     const url = await subirPDFSupabase(doc, uuid);
+
+    // 💾 4. Guardar URL
     await guardarURLDescuento(uuid, url);
 
-    alert("✅ Descuento guardado correctamente");
-    limpiarTodo();
+  alert("✅ Descuento guardado correctamente");
+limpiarTodo();
 
   } catch (e) {
     console.error(e);
     alert("❌ Error al guardar descuento");
-  } finally {
-    btn.disabled = false;
-    btn.innerText = "💾 Guardar descuento";
   }
 }
-
 function limpiarTodo() {
 
   // limpiar variables
@@ -727,9 +921,6 @@ function limpiarTodo() {
   document.getElementById("proveedor").value = "";
 
 }
-
-
 </script>
-
 </body>
 </html>
