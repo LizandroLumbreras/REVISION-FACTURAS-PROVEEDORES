@@ -57,7 +57,7 @@ tr.falta{background:#fff6c2}
 </table>
 
 <div class="total" id="total"></div>
-<button onclick="guardarDescuento()">💾 Guardar descuento</button>
+<button id="btnGuardar" onclick="guardarDescuento()">💾 Guardar descuento</button>
 <script>
 /* ================= SUPABASE ================= */
 const supa = supabase.createClient(
@@ -663,10 +663,28 @@ async function guardarURLDescuento(uuid, url) {
   if (error) throw error;
 }
 async function guardarDescuento() {
+  const btn = document.getElementById("btnGuardar");
+  btn.disabled = true;
+  btn.innerText = "Guardando...";
+
   try {
     const uuid = facturaActualUUID;
+
     if (!uuid) {
       alert("No se detectó UUID de la factura");
+      return;
+    }
+
+    const { data, error } = await supa
+      .from("deuda_limpia_pdd")
+      .select("descuentos")
+      .eq("uuid_cfdi", uuid)
+      .single();
+
+    if (error) throw error;
+
+    if (data && data.descuentos) {
+      alert("⚠️ Esta factura ya tiene un descuento registrado.");
       return;
     }
 
@@ -675,11 +693,42 @@ async function guardarDescuento() {
     await guardarURLDescuento(uuid, url);
 
     alert("✅ Descuento guardado correctamente");
+    limpiarTodo();
+
   } catch (e) {
     console.error(e);
     alert("❌ Error al guardar descuento");
+  } finally {
+    btn.disabled = false;
+    btn.innerText = "💾 Guardar descuento";
   }
 }
+
+function limpiarTodo() {
+
+  // limpiar variables
+  conceptosFactura = [];
+  cotizadosCache = [];
+  facturaActualUUID = null;
+
+  // limpiar tabla
+  document.getElementById("tabla").innerHTML = "";
+
+  // limpiar total
+  document.getElementById("total").innerText = "";
+
+  // limpiar lista facturas
+  document.getElementById("listaFacturas").innerHTML = "";
+
+  // limpiar input file
+  document.getElementById("excelFile").value = "";
+
+  // reset proveedor
+  document.getElementById("proveedor").value = "";
+
+}
+
+
 </script>
 
 </body>
