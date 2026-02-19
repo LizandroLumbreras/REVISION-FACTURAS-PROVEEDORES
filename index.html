@@ -519,7 +519,24 @@ async function buscarFacturas(){
 }
 
 /* ================= USAR FACTURA ================= */
-function usarFactura(conceptos, uuid){
+async function usarFactura(conceptos, uuid){
+// 🔍 Verificar si ya tiene descuento
+const { data, error } = await supa
+  .from("deuda_limpia_pdd")
+  .select("descuentos")
+  .eq("uuid_cfdi", uuid)
+  .single();
+
+if (error){
+  alert("Error verificando factura");
+  return;
+}
+
+if (data && data.descuentos){
+  alert("⚠️ Esta factura ya tiene un descuento registrado.");
+  return;
+}
+
   facturaActualUUID = uuid;
   // conceptos_detalle puede venir como array o como string JSON
   let arr = conceptos;
@@ -808,8 +825,17 @@ if (best) {
 }
 
 
-    const precioCot = ok ? best.precio : 0;
-    f.precioCot = precioCot;
+const precioExcel = ok ? best.precio : 0;
+
+// Solo asigna el precio del Excel la primera vez
+if (f.precioCot === undefined) {
+  f.precioCot = precioExcel;
+}
+
+// 🔥 ESTE ES EL QUE SE USA EN TODO EL CÁLCULO
+const precioCot = f.precioCot || 0;
+
+
 
     // ✅ total piezas inferido
     const totalPiezas = inferirTotalPiezas(f, precioCot);
@@ -819,18 +845,25 @@ if (best) {
       ? (f.totalLinea / totalPiezas)
       : 0;
 
-    const diferencia = ok ? (precioUnitFact - precioCot) : 0;
+    const diferencia = precioUnitFact - precioCot;
 
-    const descuento = (ok && diferencia > 0)
-      ? (diferencia * totalPiezas)
-      : 0;
+const descuento = diferencia > 0
+  ? (diferencia * totalPiezas)
+  : 0;
+
 
     total += descuento;
 
     tbody.innerHTML += `
-      <tr class="${!ok ? 'falta' : ''}">
+      <tr class="${(!ok && precioCot === 0) ? 'falta' : ''}">
         <td>${f.descripcion}</td>
-        <td>${ok ? precioCot.toFixed(2) : "—"}</td>
+<td>
+  <input type="number" step="0.01" min="0"
+    value="${precioCot.toFixed(2)}"
+    onchange="actualizarPrecioCot(${idx}, this.value)">
+</td>
+
+
         <td>${precioUnitFact.toFixed(2)}</td>
         <td>
           <input type="number" min="1" value="${pzasCaja}"
@@ -851,6 +884,12 @@ function actualizarPiezas(idx, valor){
   conceptosFactura[idx].piezasCaja = pzas;
   comparar(cotizadosCache, conceptosFactura);
 }
+function actualizarPrecioCot(idx, valor){
+  const nuevo = parseFloat(valor) || 0;
+  conceptosFactura[idx].precioCot = nuevo;
+  comparar(cotizadosCache, conceptosFactura);
+}
+
 async function generarPDFDescuento(uuid) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
@@ -935,20 +974,6 @@ async function guardarDescuento() {
 
     if (!uuid) {
       alert("No se detectó UUID de la factura");
-      return;
-    }
-
-    // 🔍 1. Verificar si ya tiene descuento
-    const { data, error } = await supa
-      .from("deuda_limpia_pdd")
-      .select("descuentos")
-      .eq("uuid_cfdi", uuid)
-      .single();
-
-    if (error) throw error;
-
-    if (data && data.descuentos) {
-      alert("⚠️ Esta factura ya tiene un descuento registrado.\nNo se puede duplicar.");
       return;
     }
 
